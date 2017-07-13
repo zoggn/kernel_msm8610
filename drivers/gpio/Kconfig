@@ -66,6 +66,9 @@ config GPIO_SYSFS
 config GPIO_GENERIC
 	tristate
 
+config EMODE_GPIO_ENG
+	bool "ENG GPIO"
+
 # put drivers in the right section, in alphabetical order
 
 config GPIO_DA9052

@@ -755,7 +755,7 @@ int mdp3_iommu_init(void)
 
 	mutex_init(&mdp3_res->iommu_lock);
 
-	mutex_init(&mdp3_res->iommu_lock);
+	//mutex_init(&mdp3_res->iommu_lock);     //mingquan.lai merge Qualcomm patch to fix TZ cracsh
 
 	ret = mdp3_iommu_domain_init();
 	if (ret) {
@@ -1384,7 +1384,9 @@ int mdp3_self_map_iommu(struct ion_client *client, struct ion_handle *handle,
 			ret = 0;
 		} else {
 			ret = PTR_ERR(iommu_meta);
-			goto out_unlock;
+			mutex_unlock(&mdp3_res->iommu_lock);		//mingquan.lai merge Qualcomm patch to fix TZ cracsh
+			pr_err("%s:meta_create failed err=%d", __func__, ret);
+			return ret;
 		}
 	} else {
 		if (iommu_meta->flags != iommu_flags) {
@@ -1990,6 +1992,29 @@ int mdp3_create_sysfs_link(struct device *dev)
 			&mdp3_res->pdev->dev.kobj, "mdp");
 
 	return rc;
+}
+
+int mdp3_acquire_ppp(void)
+{
+	int rc;
+	rc = wait_for_completion_timeout(&mdp3_res->ppp_comp,
+				MDP_PPP_MAX_TIMEOUT);
+	if (rc == 0)
+		rc = -ETIME;
+	else if (rc > 0)
+		rc = 0;
+	return rc;
+}
+
+void mdp3_release_ppp(void)
+{
+	complete(&mdp3_res->ppp_comp);
+}
+
+void mdp3_reset_ppp(void)
+{
+	init_completion(&mdp3_res->ppp_comp);
+	complete(&mdp3_res->ppp_comp);
 }
 
 static int mdp3_probe(struct platform_device *pdev)

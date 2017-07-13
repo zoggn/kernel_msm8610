@@ -347,6 +347,58 @@ int usb_interface_id(struct usb_configuration *config,
 	if (id < MAX_CONFIG_INTERFACES) {
 		config->interface[id] = function;
 		config->next_interface_id = id + 1;
+
+		//add by shenghua.gong@tcl.com start PR611448
+		//let usb interface have the same MI
+		if (config->cdev->desc.idVendor == 0x1BBB && config->cdev->desc.idProduct == 0x9018) 
+     	{
+     	    printk("gsh_test line:%d function->name=%s\n", __LINE__, function->name);
+        	if (strcmp(function->name, "diag") == 0) 
+            	id = 0; 
+			else if (strcmp(function->name, "adb") == 0) 
+            	id = 1;
+			else if (strcmp(function->name, "modem") == 0) 
+            	id = 2;
+			else if (strcmp(function->name, "nmea") == 0) 
+            	id = 3;
+			else if (strcmp(function->name, "Mass Storage Function") == 0) 
+            	id = 4;
+   		} 
+
+		if (config->cdev->desc.idVendor == 0x1BBB && config->cdev->desc.idProduct == 0x9017) 
+     	{
+     		printk("gsh_test line:%d function->name=%s\n", __LINE__, function->name);
+        	if (strcmp(function->name, "diag") == 0) 
+            	id = 0; 
+			else if (strcmp(function->name, "modem") == 0) 
+            	id = 1;
+			else if (strcmp(function->name, "nmea") == 0) 
+            	id = 2;
+			else if (strcmp(function->name, "Mass Storage Function") == 0) 
+            	id = 3;
+   		} 
+
+		if (config->cdev->desc.idVendor == 0x1BBB && config->cdev->desc.idProduct == 0xf003) 
+     	{
+        	if (strcmp(function->name, "mtp") == 0) 
+            	id = 0; 
+			else if (strcmp(function->name, "diag") == 0) 
+            	id = 1;
+			else if (strcmp(function->name, "adb") == 0) 
+            	id = 2;
+   		} 
+
+		if (config->cdev->desc.idVendor == 0x1BBB && config->cdev->desc.idProduct == 0x904D) 
+     	{
+        	if (strcmp(function->name, "ptp") == 0) 
+            	id = 0; 
+			else if (strcmp(function->name, "diag") == 0) 
+            	id = 1;
+			else if (strcmp(function->name, "adb") == 0) 
+            	id = 2;
+   		} 
+		//shenghua.gong@tcl.com add end
+
 		return id;
 	}
 	return -ENODEV;

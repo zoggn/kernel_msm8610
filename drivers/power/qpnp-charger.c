@@ -55,6 +55,7 @@
 #define CHGR_VDD_MAX				0x40
 #define CHGR_VDD_SAFE				0x41
 #define CHGR_VDD_MAX_STEP			0x42
+#define CHGR_VDDMAX_GSM_ADJ			0x43 // add by shicuiping for close vdd adj
 #define CHGR_IBAT_MAX				0x44
 #define CHGR_IBAT_SAFE				0x45
 #define CHGR_VIN_MIN				0x47
@@ -141,7 +142,7 @@
 #define SMBCL_MISC_SUBTYPE			0x47
 
 #define QPNP_CHARGER_DEV_NAME	"qcom,qpnp-charger"
-
+#define QPNP_TEMP_CAN_WRITE 0 // add by shicuiping, if use it ,change it to 1
 /* Status bits and masks */
 #define CHGR_BOOT_DONE			BIT(7)
 #define CHGR_CHG_EN			BIT(7)
@@ -330,6 +331,12 @@ struct qpnp_chg_chip {
 	unsigned int			warm_bat_mv;
 	unsigned int			cool_bat_mv;
 	unsigned int			resume_delta_mv;
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for charging status change, 2014/03/31
+#ifndef TARGET_BUILD_MMITEST
+	unsigned int			resume_delta_mv_default;
+	int				soc_now;
+#endif
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi, 2014/03/31
 	int				insertion_ocv_uv;
 	int				term_current;
 	int				soc_resume_limit;
@@ -1282,7 +1289,22 @@ qpnp_chg_vddmax_and_trim_set(struct qpnp_chg_chip *chip,
 			voltage, trim_mv, vddmax, trim);
 	return 0;
 }
+// add by shicuiping start
+static int
+qpnp_chg_vddmax_get(struct qpnp_chg_chip *chip)
+{
+	int rc;
+	u8 vddmax = 0;
 
+	rc = qpnp_chg_read(chip, &vddmax, chip->chgr_base + CHGR_VDD_MAX, 1);
+	if (rc) {
+		pr_err("Failed to write vddmax: %d\n", rc);
+		return rc;
+	}
+
+	return QPNP_CHG_V_MIN_MV + (int)vddmax * QPNP_CHG_V_STEP_MV;
+}
+// add by shicuiping stop
 /* JEITA compliance logic */
 static void
 qpnp_chg_set_appropriate_vddmax(struct qpnp_chg_chip *chip)
@@ -1414,6 +1436,9 @@ qpnp_chg_regulator_batfet_set(struct qpnp_chg_chip *chip, bool enable)
 }
 
 #define ENUM_T_STOP_BIT		BIT(0)
+#ifndef TARGET_BUILD_MMITEST
+#define VBATDET_MAX_ERR_MV	10// [PLATFORM]-Add by TCTSZ.cuiping.shi, for charging status change, 2014/03/31
+#endif
 static irqreturn_t
 qpnp_chg_usb_usbin_valid_irq_handler(int irq, void *_chip)
 {
@@ -1421,11 +1446,33 @@ qpnp_chg_usb_usbin_valid_irq_handler(int irq, void *_chip)
 	int usb_present, host_mode, usbin_health;
 	u8 psy_health_sts;
 
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for BUG 638806, 2014/04/17
+#ifndef TARGET_BUILD_MMITEST
+	int ii_num=0;
+	usb_status_check:
+#endif
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi,  2014/04/17
+
 	usb_present = qpnp_chg_is_usb_chg_plugged_in(chip);
 	host_mode = qpnp_chg_is_otg_en_set(chip);
-	pr_debug("usbin-valid triggered: %d host_mode: %d\n",
-		usb_present, host_mode);
-
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for charging status change, 2014/03/31
+#ifndef TARGET_BUILD_MMITEST
+	pr_info("usbin-valid triggered: %d host_mode: %d, soc_now:%d\n",
+		usb_present, host_mode,chip->soc_now);
+	if( (1==usb_present) && (chip->soc_now<100) )
+	{
+		qpnp_chg_disable_irq(&chip->chg_vbatdet_lo);
+		chip->resume_delta_mv=VBATDET_MAX_ERR_MV;
+		qpnp_chg_set_appropriate_vbatdet(chip);
+		qpnp_chg_enable_irq(&chip->chg_vbatdet_lo);
+	}else{
+		qpnp_chg_disable_irq(&chip->chg_vbatdet_lo);
+		chip->resume_delta_mv=chip->resume_delta_mv_default;
+		qpnp_chg_set_appropriate_vbatdet(chip);
+		qpnp_chg_enable_irq(&chip->chg_vbatdet_lo);
+	}
+#endif
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi, 2014/03/31
 	/* In host mode notifications cmoe from USB supply */
 	if (host_mode)
 		return IRQ_HANDLED;
@@ -1496,7 +1543,18 @@ qpnp_chg_usb_usbin_valid_irq_handler(int irq, void *_chip)
 		power_supply_set_present(chip->usb_psy, chip->usb_present);
 		schedule_work(&chip->batfet_lcl_work);
 	}
-
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for BUG 638806, 2014/04/17
+#ifndef TARGET_BUILD_MMITEST
+	else{
+		pr_info("usb_present: %d, chip->usb_present: %d, USB status check ERROR, check again, ii_num:%d\n",
+			usb_present, chip->usb_present,ii_num);
+		udelay(100);
+		ii_num++;
+		if(ii_num<4)
+			goto usb_status_check;
+	}
+#endif
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi,  2014/04/17
 	return IRQ_HANDLED;
 }
 
@@ -1699,6 +1757,9 @@ qpnp_batt_property_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_SETTLED:
 	case POWER_SUPPLY_PROP_VOLTAGE_MIN:
 	case POWER_SUPPLY_PROP_COOL_TEMP:
+#if QPNP_TEMP_CAN_WRITE // add by shicuiping
+	case POWER_SUPPLY_PROP_TEMP:
+#endif
 	case POWER_SUPPLY_PROP_WARM_TEMP:
 		return 1;
 	default:
@@ -1815,7 +1876,11 @@ static enum power_supply_property msm_batt_power_props[] = {
 	POWER_SUPPLY_PROP_INPUT_VOLTAGE_REGULATION,
 	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_CHARGE_VOLTAGE, // add by shicuiping
+	POWER_SUPPLY_PROP_CHARGE_TEMP, // add by shicuiping
 	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_TEMP_VOL, //add by shicuiping for therm adc voltage
+	POWER_SUPPLY_PROP_POWER_ON_VOLTAGE, //add by shicuiping
 	POWER_SUPPLY_PROP_COOL_TEMP,
 	POWER_SUPPLY_PROP_WARM_TEMP,
 	POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL,
@@ -1837,7 +1902,7 @@ module_param(charger_monitor, int, 0644);
 static int ext_ovp_present;
 module_param(ext_ovp_present, int, 0444);
 
-#define USB_WALL_THRESHOLD_MA	500
+#define USB_WALL_THRESHOLD_MA	1500 //change by shicuiping for chg current
 #define OVP_USB_WALL_THRESHOLD_MA	200
 static int
 qpnp_power_get_property_mains(struct power_supply *psy,
@@ -1902,6 +1967,7 @@ get_prop_battery_voltage_now(struct qpnp_chg_chip *chip)
 			pr_err("Unable to read vbat rc=%d\n", rc);
 			return 0;
 		}
+		//pr_info(" BMS voltage is :%duV\n",(int)results.physical);// mingquan.lai add battery log 20140307
 		return results.physical;
 	}
 }
@@ -2008,6 +2074,7 @@ get_prop_current_now(struct qpnp_chg_chip *chip)
 	if (chip->bms_psy) {
 		chip->bms_psy->get_property(chip->bms_psy,
 			  POWER_SUPPLY_PROP_CURRENT_NOW, &ret);
+		//pr_info(" BMS current is :%duA\n",ret.intval);// mingquan.lai add battery log 20140307
 		return ret.intval;
 	} else {
 		pr_debug("No BMS supply registered return 0\n");
@@ -2054,10 +2121,14 @@ get_prop_capacity(struct qpnp_chg_chip *chip)
 {
 	union power_supply_propval ret = {0,};
 	int battery_status, bms_status, soc, charger_in;
-
-	if (chip->use_default_batt_values || !get_prop_batt_present(chip))
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for charging status change, 2014/03/31
+	if (chip->use_default_batt_values || !get_prop_batt_present(chip)){
+#ifndef TARGET_BUILD_MMITEST
+		chip->soc_now=DEFAULT_CAPACITY;
+#endif
 		return DEFAULT_CAPACITY;
-
+	}
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi,  2014/03/31
 	if (chip->bms_psy) {
 		chip->bms_psy->get_property(chip->bms_psy,
 				POWER_SUPPLY_PROP_CAPACITY, &ret);
@@ -2086,6 +2157,18 @@ get_prop_capacity(struct qpnp_chg_chip *chip)
 				&& !qpnp_chg_is_usb_chg_plugged_in(chip))
 				pr_warn_ratelimited("Battery 0, CHG absent\n");
 		}
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for charging status change, 2014/03/31
+#ifndef TARGET_BUILD_MMITEST
+		if (soc == 100 &&(chip->soc_now!=DEFAULT_CAPACITY)&&(chip->soc_now<100)
+				&&get_prop_batt_status(chip) == POWER_SUPPLY_STATUS_CHARGING) {
+			pr_info("still in charging, correct it to 99 !\n");
+			soc = 99;
+		}else if( (chip->soc_now!=DEFAULT_CAPACITY)&&(soc > chip->soc_now)
+				&& get_prop_batt_status(chip) == POWER_SUPPLY_STATUS_DISCHARGING)
+			soc = chip->soc_now;
+		chip->soc_now=soc;
+#endif
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi, 2014/03/31
 		return soc;
 	} else {
 		pr_debug("No BMS supply registered return 50\n");
@@ -2093,11 +2176,20 @@ get_prop_capacity(struct qpnp_chg_chip *chip)
 
 	/* return default capacity to avoid userspace
 	 * from shutting down unecessarily */
+#ifndef TARGET_BUILD_MMITEST
+	 chip->soc_now=DEFAULT_CAPACITY;// [PLATFORM]-Add by TCTSZ.cuiping.shi, for charging status change, 2014/03/31
+#endif
 	return DEFAULT_CAPACITY;
 }
 
 #define DEFAULT_TEMP		250
 #define MAX_TOLERABLE_BATT_TEMP_DDC	680
+// add by shicuiping for therm with diff current start
+#define BATT_WARM_HOLD 450
+static void qpnp_chg_set_appropriate_battery_current(struct qpnp_chg_chip *chip);
+#if QPNP_TEMP_CAN_WRITE // add by shicuiping
+static int temp_init = 0xFFFF;
+#endif
 static int
 get_prop_batt_temp(struct qpnp_chg_chip *chip)
 {
@@ -2112,11 +2204,88 @@ get_prop_batt_temp(struct qpnp_chg_chip *chip)
 		pr_debug("Unable to read batt temperature rc=%d\n", rc);
 		return 0;
 	}
-	pr_debug("get_bat_temp %d %lld\n",
+// [PLATFORM]-Change-BEGIN by TCTSZ.cuiping.shi,  for high temp chg current set
+#if QPNP_TEMP_CAN_WRITE // add by shicuiping
+	if( (temp_init>(-500)) && (temp_init<1300))
+		results.physical  = temp_init;
+#endif
+	//pr_info("get_bat_temp %lld\n", results.physical);
+#if 1
+	if( !chip->bat_is_warm && (results.physical>BATT_WARM_HOLD) ){
+		chip->bat_is_warm = true;
+		chip->resuming_charging = false;
+		qpnp_chg_set_appropriate_vddmax(chip);
+		qpnp_chg_set_appropriate_battery_current(chip);
+		qpnp_chg_set_appropriate_vbatdet(chip);
+	}else if( chip->bat_is_warm && results.physical<(BATT_WARM_HOLD-20)){
+		chip->bat_is_warm = false;
+		qpnp_chg_set_appropriate_vddmax(chip);
+		qpnp_chg_set_appropriate_battery_current(chip);
+		qpnp_chg_set_appropriate_vbatdet(chip);
+	}
+#endif
+	// [PLATFORM]-Change-END by TCTSZ.cuiping.shi
+	return (int)results.physical;
+}
+//add by shicuiping for therm adc voltage start
+static int get_prop_batt_temp_voltage(struct qpnp_chg_chip *chip)
+{
+	int rc = 0;
+	struct qpnp_vadc_result results;
+
+	rc = qpnp_vadc_read(chip->vadc_dev, LR_MUX1_BATT_THERM_VOLTAGE, &results);
+	if (rc) {
+		pr_debug("Unable to read batt temperature rc=%d\n", rc);
+		return 0;
+	}
+	pr_debug(" %d %lld\n",
 		results.adc_code, results.physical);
 
 	return (int)results.physical;
 }
+
+#include <mach/msm_smem.h>
+static int get_prop_power_on_voltage(struct qpnp_chg_chip *chip)
+{
+	static uint32_t power_on_voltage = 3000;
+	if (power_on_voltage ==3000)
+	{
+		uint32_t* power_on_voltage_smem;
+		power_on_voltage_smem = smem_alloc(SMEM_VERSION_POWERON_VOLTAGE, sizeof(uint32_t));
+		if(power_on_voltage_smem!=NULL)
+			power_on_voltage =*power_on_voltage_smem;
+	}
+	return (int)power_on_voltage;
+}
+static int get_prop_charge_temp(struct qpnp_chg_chip *chip)
+{
+	int rc = 0;
+	struct qpnp_vadc_result results;
+
+	rc = qpnp_vadc_read(chip->vadc_dev, CHG_TEMP, &results);
+	if (rc) {
+		pr_err("Unable to read batt temperature rc=%d\n", rc);
+		return 0;
+	}
+	pr_debug(" %d %lld\n",results.adc_code, results.physical);
+
+	return (int)results.physical;
+}
+static int get_prop_charge_voltage(struct qpnp_chg_chip *chip)
+{
+	int rc = 0;
+	struct qpnp_vadc_result results;
+
+	rc = qpnp_vadc_read(chip->vadc_dev, USBIN, &results);
+	if (rc) {
+		pr_err("Unable to read batt temperature rc=%d\n", rc);
+		return 0;
+	}
+	pr_debug(" %d %lld\n",results.adc_code, results.physical);
+
+	return (int)results.physical;
+}
+//add by shicuiping for  adc voltage stop
 
 static int get_prop_cycle_count(struct qpnp_chg_chip *chip)
 {
@@ -2250,6 +2419,20 @@ qpnp_batt_power_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_TEMP:
 		val->intval = get_prop_batt_temp(chip);
 		break;
+	//add by shicuiping for therm adc voltage start
+	case POWER_SUPPLY_PROP_TEMP_VOL:
+		val->intval = get_prop_batt_temp_voltage(chip);
+		break;
+	case POWER_SUPPLY_PROP_POWER_ON_VOLTAGE:
+		val->intval = get_prop_power_on_voltage(chip);
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_VOLTAGE:
+		val->intval = get_prop_charge_voltage(chip);
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_TEMP:
+		val->intval = get_prop_charge_temp(chip);
+		break;
+	//add by shicuiping for therm adc voltage stop
 	case POWER_SUPPLY_PROP_COOL_TEMP:
 		val->intval = chip->cool_bat_decidegc;
 		break;
@@ -3028,7 +3211,9 @@ qpnp_chg_adjust_vddmax(struct qpnp_chg_chip *chip, int vbat_mv)
 }
 
 #define CONSECUTIVE_COUNT	3
+#ifdef TARGET_BUILD_MMITEST
 #define VBATDET_MAX_ERR_MV	50
+#endif
 static void
 qpnp_eoc_work(struct work_struct *work)
 {
@@ -3113,10 +3298,27 @@ qpnp_eoc_work(struct work_struct *work)
 			count = 0;
 		} else {
 			if (count == CONSECUTIVE_COUNT) {
-				pr_info("End of Charging\n");
+			// change by shicuiping
+				if (!chip->bat_is_cool && !chip->bat_is_warm) {
+					pr_info("End of Charging\n");
+					chip->chg_done = true;
+				} else {
+					pr_info("stop charging: battery is %s, vddmax = %d reached\n",
+						chip->bat_is_cool
+							? "cool" : "warm",
+						qpnp_chg_vddmax_get(chip));
+				}
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for charging status change, 2014/03/31
+#ifndef TARGET_BUILD_MMITEST
+				qpnp_chg_disable_irq(&chip->chg_vbatdet_lo);
+				chip->resume_delta_mv=chip->resume_delta_mv_default;
+				qpnp_chg_set_appropriate_vbatdet(chip);
+#endif
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi, 2014/03/31
 				chip->delta_vddmax_mv = 0;
 				qpnp_chg_set_appropriate_vddmax(chip);
-				chip->chg_done = true;
+				//chip->chg_done = true;
+				// change by shicuiping
 				qpnp_chg_charge_en(chip, 0);
 				/* sleep for a second before enabling */
 				msleep(2000);
@@ -3197,11 +3399,11 @@ qpnp_chg_adc_notification(enum qpnp_tm_state state, void *ctx)
 
 	temp = get_prop_batt_temp(chip);
 
-	pr_debug("temp = %d state = %s\n", temp,
+	pr_info("temp = %d state = %s\n", temp,// [PLATFORM]-Change by TCTSZ.cuiping.shi,  for high temp chg current set
 			state == ADC_TM_WARM_STATE ? "warm" : "cool");
 
 	if (state == ADC_TM_WARM_STATE) {
-		if (temp > chip->warm_bat_decidegc) {
+		if (temp >= (chip->warm_bat_decidegc-HYSTERISIS_DECIDEGC/4)) {// [PLATFORM]-Change by TCTSZ.cuiping.shi,  for high temp chg current set
 			/* Normal to warm */
 			bat_warm = true;
 			bat_cool = false;
@@ -3209,8 +3411,7 @@ qpnp_chg_adc_notification(enum qpnp_tm_state state, void *ctx)
 				chip->warm_bat_decidegc - HYSTERISIS_DECIDEGC;
 			chip->adc_param.state_request =
 				ADC_TM_COOL_THR_ENABLE;
-		} else if (temp >
-				chip->cool_bat_decidegc + HYSTERISIS_DECIDEGC){
+		} else if (temp >= (chip->adc_param.high_temp-HYSTERISIS_DECIDEGC/4) ){// [PLATFORM]-Change by TCTSZ.cuiping.shi,  for high temp chg current set
 			/* Cool to normal */
 			bat_warm = false;
 			bat_cool = false;
@@ -3221,7 +3422,7 @@ qpnp_chg_adc_notification(enum qpnp_tm_state state, void *ctx)
 					ADC_TM_HIGH_LOW_THR_ENABLE;
 		}
 	} else {
-		if (temp < chip->cool_bat_decidegc) {
+		if (temp <= (chip->cool_bat_decidegc+HYSTERISIS_DECIDEGC/4)) {// [PLATFORM]-Change by TCTSZ.cuiping.shi,  for high temp chg current set
 			/* Normal to cool */
 			bat_warm = false;
 			bat_cool = true;
@@ -3229,8 +3430,7 @@ qpnp_chg_adc_notification(enum qpnp_tm_state state, void *ctx)
 				chip->cool_bat_decidegc + HYSTERISIS_DECIDEGC;
 			chip->adc_param.state_request =
 				ADC_TM_WARM_THR_ENABLE;
-		} else if (temp <
-				chip->warm_bat_decidegc - HYSTERISIS_DECIDEGC){
+		} else if (temp <=	(chip->adc_param.low_temp+HYSTERISIS_DECIDEGC/4) ){// [PLATFORM]-Change by TCTSZ.cuiping.shi,  for high temp chg current set
 			/* Warm to normal */
 			bat_warm = false;
 			bat_cool = false;
@@ -3261,7 +3461,7 @@ qpnp_chg_adc_notification(enum qpnp_tm_state state, void *ctx)
 		qpnp_chg_set_appropriate_vbatdet(chip);
 	}
 
-	pr_debug("warm %d, cool %d, low = %d deciDegC, high = %d deciDegC\n",
+	pr_info("warm %d, cool %d, low = %d deciDegC, high = %d deciDegC\n",// [PLATFORM]-Change by TCTSZ.cuiping.shi,  for high temp chg current set
 			chip->bat_is_warm, chip->bat_is_cool,
 			chip->adc_param.low_temp, chip->adc_param.high_temp);
 
@@ -3587,6 +3787,12 @@ qpnp_batt_power_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_COOL_TEMP:
 		rc = qpnp_chg_configure_jeita(chip, psp, val->intval);
 		break;
+#if QPNP_TEMP_CAN_WRITE // add by shicuiping
+	case POWER_SUPPLY_PROP_TEMP:
+		rc=0;
+		temp_init = val->intval;
+		break;
+#endif
 	case POWER_SUPPLY_PROP_WARM_TEMP:
 		rc = qpnp_chg_configure_jeita(chip, psp, val->intval);
 		break;
@@ -4026,7 +4232,16 @@ qpnp_chg_hwinit(struct qpnp_chg_chip *chip, u8 subtype,
 		rc = qpnp_chg_masked_write(chip, chip->chgr_base +
 			CHGR_IBAT_TERM_CHGR,
 			0xFF, 0x08, 1);
-
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for change chg parameter charge, 2014/03/24
+		rc = qpnp_chg_masked_write(chip, chip->chgr_base +
+			CHGR_VDDMAX_GSM_ADJ,0xFF, 0x00, 1);// add by shicuiping for close vdd adj
+#ifndef TARGET_BUILD_MMITEST
+		rc = qpnp_chg_masked_write(chip, chip->chgr_base +
+			0xd0,0xFF, 0xA5, 1);
+		rc = qpnp_chg_masked_write(chip, chip->chgr_base +
+			0xee,0xFF, 0x20, 1);
+#endif
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, 2014/03/24
 		break;
 	case SMBB_BUCK_SUBTYPE:
 	case SMBBP_BUCK_SUBTYPE:
@@ -4285,8 +4500,14 @@ qpnp_charger_read_dt_props(struct qpnp_chg_chip *chip)
 
 	OF_PROP_READ(chip, max_voltage_mv, "vddmax-mv", rc, 0);
 	OF_PROP_READ(chip, min_voltage_mv, "vinmin-mv", rc, 0);
+#ifdef TARGET_BUILD_MMITEST
+	chip->min_voltage_mv = chip->max_voltage_mv;
+#endif
 	OF_PROP_READ(chip, safe_voltage_mv, "vddsafe-mv", rc, 0);
 	OF_PROP_READ(chip, resume_delta_mv, "vbatdet-delta-mv", rc, 0);
+#ifndef TARGET_BUILD_MMITEST
+	chip->resume_delta_mv_default=chip->resume_delta_mv;// [PLATFORM]-Add by TCTSZ.cuiping.shi, for charging status change, 2014/03/31
+#endif
 	OF_PROP_READ(chip, safe_current, "ibatsafe-ma", rc, 0);
 	OF_PROP_READ(chip, max_bat_chg_current, "ibatmax-ma", rc, 0);
 	if (rc)
@@ -4319,6 +4540,10 @@ qpnp_charger_read_dt_props(struct qpnp_chg_chip *chip)
 			return rc;
 		}
 	}
+	// [PLATFORM]-Change-BEGIN by TCTSZ.cuiping.shi,  for high temp chg current set
+	OF_PROP_READ(chip, warm_bat_chg_ma, "ibatmax-warm-ma", rc, 1);
+	OF_PROP_READ(chip, warm_bat_mv, "warm-bat-mv", rc, 1);
+	// [PLATFORM]-Change_END by TCTSZ.cuiping.shi
 
 	/* Look up JEITA compliance parameters if cool and warm temp provided */
 	if (chip->cool_bat_decidegc || chip->warm_bat_decidegc) {

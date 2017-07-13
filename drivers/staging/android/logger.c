@@ -33,6 +33,14 @@
 #define CONFIG_LOGCAT_SIZE 256
 #endif
 
+// add by zhoujinggao for http://bugzilla.tcl-ta.com/show_bug.cgi?id=610390
+#include <linux/proc_fs.h>
+#define LOG_TS_FILE    "log_ts"
+static int s_fake_read;
+
+module_param_named(fake_read, s_fake_read, int, 0660);
+int g_ts_switch = 0; // 0: android default timestamp; 1: kernel timestamp
+
 /*
  * struct logger_log - represents a specific log, such as 'main' or 'radio'
  *
@@ -57,12 +65,18 @@ struct logger_log {
  * This object lives from open to release, so we don't need additional
  * reference counting. The structure is protected by log->mutex.
  */
+ 
+ // add by zhoujinggao for http://bugzilla.tcl-ta.com/show_bug.cgi?id=610390
+ 
 struct logger_reader {
 	struct logger_log	*log;	/* associated log */
 	struct list_head	list;	/* entry in logger_log's list */
 	size_t			r_off;	/* current read head offset */
 	bool			r_all;	/* reader can read all entries */
 	int			r_ver;	/* reader ABI version */
+
+	size_t                  missing_bytes; /* android log missing warning */
+  /* } */
 };
 
 /* logger_offset - returns index 'n' into the log via (optimized) modulus */
@@ -243,6 +257,60 @@ static size_t get_next_entry_by_uid(struct logger_log *log,
 	return off;
 }
 
+/* for android log missing warning { */
+
+static ssize_t logger_fake_message(struct logger_log *log, struct logger_reader *reader, char __user *buf, const char *fmt, ...) 
+{
+	int len, header_size, entry_len;
+        char message[256], *tag;
+	va_list ap;
+	struct logger_entry *current_entry, scratch;
+	
+	header_size = get_user_hdr_len(reader->r_ver);
+
+	current_entry = get_entry_header(log, reader->r_off, &scratch);
+
+	memset(message, 0, header_size);
+	va_start(ap, fmt);
+        len = vsnprintf(message + header_size + 5, sizeof(message) - (header_size + 5), fmt, ap);
+	va_end(ap);
+
+	entry_len = 5 + len + 1/* message size */;
+	tag = message + header_size;
+	tag[0] = 0x5;
+	tag[1] = 'A';
+	tag[2] = 'E';
+	tag[3] = 'E';
+	tag[4] = 0;
+
+	switch (reader->r_ver) {
+	case 1: {
+		struct user_logger_entry_compat *entryp = (struct user_logger_entry_compat *)message;
+		entryp->sec = current_entry->sec;
+		entryp->nsec = current_entry->nsec;
+		entryp->len = entry_len;
+		break;
+	}
+	case 2: {
+		struct logger_entry *entryp = (struct logger_entry *)message;
+		entryp->sec = current_entry->sec;
+		entryp->nsec = current_entry->nsec;
+		entryp->len = entry_len;
+		entryp->hdr_size = header_size;
+		break;
+	}
+	default:
+		/* FIXME: ? */
+		return 0;
+		break;
+	}
+
+        if (copy_to_user(buf, message, entry_len + header_size))
+		return -EFAULT;
+
+	return entry_len + header_size;
+}
+
 /*
  * logger_read - our log's read() method
  *
@@ -302,6 +370,19 @@ start:
 		mutex_unlock(&log->mutex);
 		goto start;
 	}
+
+	if (unlikely(s_fake_read)) {
+		ret = logger_fake_message(log, reader, buf, "Fake read return string.");
+		goto out;
+	}
+
+	/* for android log missing warning { */
+	if (reader->missing_bytes > 0) {
+		ret = logger_fake_message(log, reader, buf, "some logs have been lost (%u bytes estimated)", reader->missing_bytes);
+		reader->missing_bytes = 0;
+		goto out;
+	}
+	/* } */
 
 	/* get the size of the next entry */
 	ret = get_user_hdr_len(reader->r_ver) +
@@ -377,6 +458,8 @@ static inline int is_between(size_t a, size_t b, size_t c)
  *
  * The caller needs to hold log->mutex.
  */
+ 
+ // add by zhoujinggao for http://bugzilla.tcl-ta.com/show_bug.cgi?id=610390
 static void fix_up_readers(struct logger_log *log, size_t len)
 {
 	size_t old = log->w_off;
@@ -387,8 +470,16 @@ static void fix_up_readers(struct logger_log *log, size_t len)
 		log->head = get_next_entry(log, log->head, len);
 
 	list_for_each_entry(reader, &log->readers, list)
-		if (is_between(old, new, reader->r_off))
+		if (is_between(old, new, reader->r_off)) {
+			size_t old_r_off = reader->r_off;
 			reader->r_off = get_next_entry(log, reader->r_off, len);
+			if (reader->r_off >= old_r_off) {
+				reader->missing_bytes += (reader->r_off - old_r_off);
+			}
+			else {
+				reader->missing_bytes += (reader->r_off + (log->size - old_r_off));
+			}
+		}
 }
 
 /*
@@ -447,6 +538,9 @@ static ssize_t do_write_log_from_user(struct logger_log *log,
  * writev(), and aio_write(). Writes are our fast path, and we try to optimize
  * them above all else.
  */
+ 
+ // add by zhoujinggao for http://bugzilla.tcl-ta.com/show_bug.cgi?id=610390
+ 
 ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 			 unsigned long nr_segs, loff_t ppos)
 {
@@ -455,17 +549,39 @@ ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	struct logger_entry header;
 	struct timespec now;
 	ssize_t ret = 0;
+	
+/* make android timestamp same with printk {*/
+	if (g_ts_switch == 0) {
+		// android default timestamp
+		//now = current_kernel_time();
+		getnstimeofday(&now);
+		header.pid = current->tgid;
+		header.tid = current->pid;
+		header.sec = now.tv_sec;
+		header.nsec = now.tv_nsec;
+		header.euid = current_euid();
+		header.len = min_t(size_t, iocb->ki_left, LOGGER_ENTRY_MAX_PAYLOAD);
+		header.hdr_size = sizeof(struct logger_entry);
 
-	now = current_kernel_time();
+	} 
+	else {
+		// use kernel timestamp
+		unsigned long long t;
+		unsigned long nanosec_rem;
+		
+		t = cpu_clock(UINT_MAX);
+		nanosec_rem = do_div(t, 1000000000);
 
-	header.pid = current->tgid;
-	header.tid = current->pid;
-	header.sec = now.tv_sec;
-	header.nsec = now.tv_nsec;
-	header.euid = current_euid();
-	header.len = min_t(size_t, iocb->ki_left, LOGGER_ENTRY_MAX_PAYLOAD);
-	header.hdr_size = sizeof(struct logger_entry);
-
+		header.pid = current->tgid;
+		header.tid = current->pid;
+		header.sec = (unsigned long)t;
+		header.nsec = nanosec_rem;
+		header.euid = current_euid();
+		header.len = min_t(size_t, iocb->ki_left, LOGGER_ENTRY_MAX_PAYLOAD);
+		header.hdr_size = sizeof(struct logger_entry);
+	}
+/* } */
+	
 	/* null writes succeed, return zero */
 	if (unlikely(!header.len))
 		return 0;
@@ -516,6 +632,7 @@ static struct logger_log *get_log_from_minor(int);
  *
  * Note how near a no-op this is in the write-only case. Keep it that way!
  */
+ // add by zhoujinggao for http://bugzilla.tcl-ta.com/show_bug.cgi?id=610390
 static int logger_open(struct inode *inode, struct file *file)
 {
 	struct logger_log *log;
@@ -540,11 +657,13 @@ static int logger_open(struct inode *inode, struct file *file)
 		reader->r_ver = 1;
 		reader->r_all = in_egroup_p(inode->i_gid) ||
 			capable(CAP_SYSLOG);
+		reader->missing_bytes = 0;
 
 		INIT_LIST_HEAD(&reader->list);
 
 		mutex_lock(&log->mutex);
 		reader->r_off = log->head;
+
 		list_add_tail(&reader->list, &log->readers);
 		mutex_unlock(&log->mutex);
 
@@ -750,6 +869,72 @@ static struct logger_log *get_log_from_minor(int minor)
 	return NULL;
 }
 
+// add by zhoujinggao for http://bugzilla.tcl-ta.com/show_bug.cgi?id=610390
+static int ts_switch_read(char *page, char **start, off_t off,
+			       int count, int *eof, void *data)
+{
+    char *p = page;
+    int len = 0;
+
+	//printk(KERN_INFO "logger: ts_switch_read\n");
+
+	p += sprintf(p, "%d\n",g_ts_switch);
+
+    *start = page + off;
+
+    len = p - page;
+    if (len > off)
+        len -= off;
+    else
+        len = 0;
+
+    return len < count ? len  : count;
+}
+
+static int ts_switch_write (struct file *file, const char *buffer,
+					unsigned long count, void *data)
+{
+	char ts_switch = 0;
+
+	if(copy_from_user((void *)&ts_switch, (const void __user *)buffer, sizeof(char))) {
+		printk(KERN_ERR "logger: ts_switch_write copy_from_user fails\n");
+		return 0;
+	}
+
+	//printk(KERN_INFO "logger: ts_switch_write ts_switch = %d\n", ts_switch);
+	switch(ts_switch) {
+	case '0':
+		g_ts_switch = 0;
+		printk(KERN_INFO "logger: ts_switch_write g_ts_switch == 0\n");
+		break;
+	case '1':
+		g_ts_switch = 1;
+		printk(KERN_INFO "logger: ts_switch_write g_ts_switch == 1\n");
+		break;
+	default:
+		printk(KERN_ERR "logger: ts_switch_write incorrect parameter\n");
+		break;
+	}
+
+    return count;
+}
+
+static void init_log_proc(void)
+{
+	struct proc_dir_entry *ts_switch_file;
+	g_ts_switch = 0; // 0=using android default log timestamp,1=kernel timestamp
+	
+	ts_switch_file = create_proc_entry(LOG_TS_FILE, 0, NULL);
+	if (ts_switch_file) {
+		ts_switch_file->read_proc = ts_switch_read;
+		ts_switch_file->write_proc = ts_switch_write;
+	} 
+	else
+		printk(KERN_ERR "xlog: init_log_proc create_proc_entry fails\n");
+}
+
+// add by zhoujinggao for http://bugzilla.tcl-ta.com/show_bug.cgi?id=610390
+
 static int __init init_log(struct logger_log *log)
 {
 	int ret;
@@ -786,6 +971,8 @@ static int __init logger_init(void)
 	ret = init_log(&log_system);
 	if (unlikely(ret))
 		goto out;
+// add by zhoujinggao for http://bugzilla.tcl-ta.com/show_bug.cgi?id=610390
+	init_log_proc();
 
 out:
 	return ret;

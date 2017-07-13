@@ -18,6 +18,7 @@
 #include <linux/stat.h>
 
 #include "power_supply.h"
+#include <linux/rtc.h>// [PLATFORM]-Add by TCTSZ.cuiping.shi, for print log 2014/03/24
 
 /*
  * This is because the name "current" breaks the device attr macro.
@@ -39,6 +40,9 @@
 }
 
 static struct device_attribute power_supply_attrs[];
+// [PLATFORM]-Add by TCTSZ.cuiping.shi, for print log 2014/03/14
+static int batt_voltage=0, batt_curr=0xFFFF, batt_temp=-500, batt_cap=-1;
+static char status[12]={};
 
 static ssize_t power_supply_show_property(struct device *dev,
 					  struct device_attribute *attr,
@@ -86,6 +90,23 @@ static ssize_t power_supply_show_property(struct device *dev,
 				attr->attr.name, ret);
 		return ret;
 	}
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for print log 2014/03/14
+	if(strcmp(psy->name, "battery") == 0)
+	{
+		if(off == POWER_SUPPLY_PROP_VOLTAGE_NOW)
+			batt_voltage=(int)value.intval;
+		else if(off == POWER_SUPPLY_PROP_CURRENT_NOW)
+			batt_curr=(int)value.intval;
+		else if (off == POWER_SUPPLY_PROP_TEMP)
+			batt_temp=(int)value.intval;
+		else if (off == POWER_SUPPLY_PROP_CAPACITY)
+			batt_cap=(int)value.intval;
+		else if (off == POWER_SUPPLY_PROP_STATUS){
+			memset(&status, 0, sizeof(status));
+			sprintf(status, "%s", status_text[value.intval]);
+		}
+	}
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi,  2014/03/14
 
 	if (off == POWER_SUPPLY_PROP_STATUS)
 		return sprintf(buf, "%s\n", status_text[value.intval]);
@@ -162,6 +183,8 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(charge_full),
 	POWER_SUPPLY_ATTR(charge_empty),
 	POWER_SUPPLY_ATTR(charge_now),
+	POWER_SUPPLY_ATTR(charge_voltage), // add by shicuiping
+	POWER_SUPPLY_ATTR(charge_temp), // add by shicuiping
 	POWER_SUPPLY_ATTR(charge_avg),
 	POWER_SUPPLY_ATTR(charge_counter),
 	POWER_SUPPLY_ATTR(charge_counter_shadow),
@@ -174,6 +197,8 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(capacity),
 	POWER_SUPPLY_ATTR(capacity_level),
 	POWER_SUPPLY_ATTR(temp),
+	POWER_SUPPLY_ATTR(temp_voltage), //add by shicuiping for therm adc voltage
+	POWER_SUPPLY_ATTR(power_on_voltage), //add by shicuiping for therm adc voltage
 	POWER_SUPPLY_ATTR(temp_cool),
 	POWER_SUPPLY_ATTR(temp_warm),
 	POWER_SUPPLY_ATTR(temp_ambient),
@@ -316,6 +341,21 @@ int power_supply_uevent(struct device *dev, struct kobj_uevent_env *env)
 		if (ret)
 			goto out;
 	}
+
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for print log 2014/03/14
+	if(strcmp(psy->name, "battery") == 0)
+	if( batt_voltage!=0 && batt_curr!=0xFFFF && batt_temp!=(-500) && batt_cap!=(-1) )
+	{
+		struct timespec ts;
+		struct rtc_time tm;
+
+		getnstimeofday(&ts);
+		rtc_time_to_tm(ts.tv_sec+28800, &tm);
+		dev_info(dev, "%d-%02d-%02d %02d:%02d:%02d:: status:%s, voltage:%dmV, capacity:%d, current:%dmA, temperature:%s%d.%dC\n",
+			 tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,tm.tm_hour, tm.tm_min, tm.tm_sec,
+				status,batt_voltage/1000,batt_cap,batt_curr/1000,(batt_temp<0&&(batt_temp/10==0))?"-":"", batt_temp/10,(int)abs(batt_temp%10));
+	}
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi,  2014/03/14
 
 out:
 	free_page((unsigned long)prop_buf);

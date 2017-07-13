@@ -50,6 +50,7 @@
 #define BITS_PER_REG		8
 #define MSM8X10_WCD_TX_PORT_NUMBER	4
 
+#define DAPM_MICBIAS_EXTERNAL_STANDALONE "MIC BIAS External Standalone" // add by changshun.zhou modify for playing music noise by headset 20140110
 #define MSM8X10_WCD_I2S_MASTER_MODE_MASK	0x08
 #define MSM8X10_DINO_CODEC_BASE_ADDR		0xFE043000
 #define MSM8X10_DINO_CODEC_REG_SIZE		0x200
@@ -218,6 +219,35 @@ static void *adsp_state_notifier;
 
 static struct snd_soc_codec *registered_codec;
 #define ADSP_STATE_READY_TIMEOUT_MS 2000
+
+static bool is_session_capture; // add by changshun.zhou modify for playing music noise by headset 20140110
+static int ear_hac_gpio = -1;
+static int ear_power_hac_init = 0;
+
+static int msm8x10_ear_power_hac_init(struct device *dev)
+{
+    int ret = 0;
+
+    if (ear_power_hac_init)
+        return 0;
+    
+    ear_hac_gpio = of_get_named_gpio(dev->of_node,
+        "qcom,ear-hac-gpio", 0);
+    printk("msm8x10_ear_power_hac_init gpio = %d\n", ear_hac_gpio);
+    if (ear_hac_gpio >= 0) {
+        ret = gpio_request(ear_hac_gpio, "ear_hac_gpio");
+        if (ret) {
+            pr_err("%s: gpio_request failed for ear_hac_gpio.\n",
+                __func__);
+            return -EINVAL;
+        }
+        gpio_direction_output(ear_hac_gpio, 0);
+    }
+
+    ear_power_hac_init = 1;
+    
+    return 0;
+}
 
 
 static int get_i2c_msm8x10_wcd_device_info(u16 reg,
@@ -877,6 +907,46 @@ static int msm8x10_wcd_codec_enable_charge_pump(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
+// 
+static void msm8x10_enable_ear_hac_power_amp(u32 on)
+{
+    int ret = 0;
+    
+    printk("msm8x10_enable_ear_hac_power_amp ear_hac_gpio = %d, on = %d\n", ear_hac_gpio, on);
+	if (ear_hac_gpio < 0)
+        return;
+    
+	if (on) {
+		ret = gpio_direction_output(ear_hac_gpio, on);
+	} else {
+		ret = gpio_direction_output(ear_hac_gpio, on);
+	}
+
+    printk("msm8x10_enable_ear_hac_power_amp ret = %d\n", ret);
+
+	printk("%s: %s external ear PAs.\n", __func__,
+			on ? "Enable" : "Disable");
+}
+
+static int msm8x10_wcd_ear_hac_gain_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+    return 0;
+}
+
+static int msm8x10_wcd_ear_hac_gain_put(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+    printk("msm8x10_wcd_ear_hac_gain_put %d\n", (int)ucontrol->value.integer.value[0]);
+    if (ucontrol->value.integer.value[0])
+	    msm8x10_enable_ear_hac_power_amp(1);
+	else
+	    msm8x10_enable_ear_hac_power_amp(0);
+	    
+    return 0;
+}
+//
+
 static int msm8x10_wcd_pa_gain_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
@@ -1150,6 +1220,9 @@ static const struct snd_kcontrol_new msm8x10_wcd_snd_controls[] = {
 
 	SOC_ENUM_EXT("EAR PA Gain", msm8x10_wcd_ear_pa_gain_enum[0],
 		msm8x10_wcd_pa_gain_get, msm8x10_wcd_pa_gain_put),
+		
+ 	SOC_SINGLE_BOOL_EXT("EAR HAC Switch", 0,
+		msm8x10_wcd_ear_hac_gain_get, msm8x10_wcd_ear_hac_gain_put),
 
 	SOC_SINGLE_TLV("LINEOUT Volume", MSM8X10_WCD_A_RX_LINE_1_GAIN,
 		       0, 12, 1, line_gain),
@@ -1650,7 +1723,7 @@ static int msm8x10_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 		wcd9xxx_resmgr_notifier_call(&msm8x10_wcd->resmgr, e_pre_on);
 
 		if (strnstr(w->name, internal1_text, 30))
-			snd_soc_update_bits(codec, micb_int_reg, 0x80, 0x80);
+			;//snd_soc_update_bits(codec, micb_int_reg, 0x80, 0x80);
 		else if (strnstr(w->name, internal2_text, 30))
 			snd_soc_update_bits(codec, micb_int_reg, 0x10, 0x10);
 		else if (strnstr(w->name, internal3_text, 30))
@@ -1658,6 +1731,8 @@ static int msm8x10_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 
 		/* Always pull up TxFe for TX2 to Micbias */
 		snd_soc_update_bits(codec, micb_int_reg, 0x04, 0x04);
+		snd_soc_update_bits(codec, MSM8X10_WCD_A_MICB_1_CTL,
+			                       0x80, 0x80); // add by changshun.zhou modify for playing music noise by headset 20140110
 		break;
 	case SND_SOC_DAPM_POST_PMU:
 		usleep_range(20000, 20100);
@@ -1665,11 +1740,13 @@ static int msm8x10_wcd_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 		wcd9xxx_resmgr_notifier_call(&msm8x10_wcd->resmgr, e_post_on);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
+		snd_soc_update_bits(codec, MSM8X10_WCD_A_MICB_1_CTL,
+			0x80, 0x00); // add by changshun.zhou modify for playing music noise by headset 20140110
 		/* Let MBHC module know so micbias switch to be off */
 		wcd9xxx_resmgr_notifier_call(&msm8x10_wcd->resmgr, e_post_off);
 
 		if (strnstr(w->name, internal1_text, 30))
-			snd_soc_update_bits(codec, micb_int_reg, 0x80, 0x00);
+			;//snd_soc_update_bits(codec, micb_int_reg, 0x80, 0x00);
 		else if (strnstr(w->name, internal2_text, 30))
 			snd_soc_update_bits(codec, micb_int_reg, 0x10, 0x00);
 		else if (strnstr(w->name, internal3_text, 30))
@@ -2103,6 +2180,11 @@ static int msm8x10_wcd_startup(struct snd_pcm_substream *substream,
 	dev_dbg(dai->codec->dev, "%s(): substream = %s  stream = %d\n",
 		__func__,
 		substream->name, substream->stream);
+
+	// add by changshun.zhou modify for playing music noise by headset 20140110 begin
+	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
+		is_session_capture = true;
+	// add by changshun.zhou modify for playing music noise by headset 20140110 end
 	return 0;
 }
 
@@ -2112,6 +2194,11 @@ static void msm8x10_wcd_shutdown(struct snd_pcm_substream *substream,
 	dev_dbg(dai->codec->dev,
 		"%s(): substream = %s  stream = %d\n" , __func__,
 		substream->name, substream->stream);
+
+	// add by changshun.zhou modify for playing music noise by headset 20140110 begin
+	if (substream->stream == SNDRV_PCM_STREAM_CAPTURE && is_session_capture)
+		is_session_capture = false;
+	// add by changshun.zhou modify for playing music noise by headset 20140110 end
 }
 
 int msm8x10_wcd_mclk_enable(struct snd_soc_codec *codec,
@@ -2482,6 +2569,14 @@ static const struct snd_soc_dapm_widget msm8x10_wcd_dapm_widgets[] = {
 		msm8x10_wcd_codec_enable_micbias, SND_SOC_DAPM_PRE_PMU |
 		SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
 
+       // add by changshun.zhou modify for playing music noise by headset 20140110 begin
+	SND_SOC_DAPM_MICBIAS_E(DAPM_MICBIAS_EXTERNAL_STANDALONE,
+	      MSM8X10_WCD_A_MICB_1_CTL,
+	      7, 0, msm8x10_wcd_codec_enable_micbias,
+	      SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU |
+	      SND_SOC_DAPM_POST_PMD),
+	// add by changshun.zhou modify for playing music noise by headset 20140110 end
+	
 	SND_SOC_DAPM_ADC_E("ADC1", NULL, MSM8X10_WCD_A_TX_1_EN, 7, 0,
 		msm8x10_wcd_codec_enable_adc, SND_SOC_DAPM_PRE_PMU |
 		SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
@@ -2732,6 +2827,34 @@ static int msm8x10_wcd_enable_ext_mb_source(struct snd_soc_codec *codec,
 	return ret;
 }
 
+// add by changshun.zhou modify for playing music noise by headset 20140110 begin
+static int msm8x10_wcd_enable_mbhc_micbias(struct snd_soc_codec *codec,
+	bool enable)
+{
+	int rc;
+	if (enable)
+		rc = snd_soc_dapm_force_enable_pin(&codec->dapm,
+		DAPM_MICBIAS_EXTERNAL_STANDALONE);
+	else {
+		if (is_session_capture == true) {
+			pr_info("%s: TX path is going on\n", __func__);
+			return 0;
+			}
+		rc = snd_soc_dapm_disable_pin(&codec->dapm,
+		DAPM_MICBIAS_EXTERNAL_STANDALONE);
+	}
+	
+	snd_soc_dapm_sync(&codec->dapm);
+	if (rc)
+		pr_debug("%s: Failed to force %s micbias", __func__,
+		enable ? "enable" : "disable");
+	else
+		pr_debug("%s: Trying force %s micbias", __func__,
+		enable ? "enable" : "disable");
+	return rc;
+}
+// add by changshun.zhou modify for playing music noise by headset 20140110 end
+	
 static void msm8x10_wcd_micb_internal(struct snd_soc_codec *codec, bool on)
 {
 	snd_soc_update_bits(codec, MSM8X10_WCD_A_MICB_1_INT_RBIAS,
@@ -3214,7 +3337,8 @@ static int msm8x10_wcd_codec_probe(struct snd_soc_codec *codec)
 
 	ret = wcd9xxx_mbhc_init(&msm8x10_wcd_priv->mbhc,
 				&msm8x10_wcd_priv->resmgr,
-				codec, NULL, &mbhc_cb, &cdc_intr_ids,
+				codec, msm8x10_wcd_enable_mbhc_micbias, // add by changshun.zhou modify for playing music noise by headset 20140110
+				&mbhc_cb, &cdc_intr_ids,
 				HELICON_MCLK_CLK_9P6MHZ, true);
 	if (ret) {
 		dev_err(msm8x10_wcd->dev, "%s: Failed to initialize mbhc\n",
@@ -3509,6 +3633,8 @@ static int __devinit msm8x10_wcd_i2c_probe(struct i2c_client *client,
 		ret = -EINVAL;
 		goto rtn;
 	}
+    
+    msm8x10_ear_power_hac_init(&client->dev);
 
 	q6_state = apr_get_q6_state();
 	if ((q6_state == APR_SUBSYS_DOWN) &&

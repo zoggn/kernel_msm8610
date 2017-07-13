@@ -41,6 +41,12 @@
 
 #include "peripheral-loader.h"
 
+// add by changshun.zhou for displaying auth failed prompt 20140115 begin
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+#include <linux/reboot.h>
+// add by changshun.zhou for displaying auth failed prompt 20140115 end
+
 #define pil_err(desc, fmt, ...)						\
 	dev_err(desc->dev, "%s: " fmt, desc->name, ##__VA_ARGS__)
 #define pil_info(desc, fmt, ...)					\
@@ -136,6 +142,155 @@ struct pil_priv {
 	int id;
 	int unvoted_flag;
 };
+
+// add by changshun.zhou for display auth failed prompt 20140115 begin
+//static int pil_auth_result = 0;
+static char *auth_file_name = "/data/jrdauth";
+
+
+static int pil_write_auth_result(char* value)
+{
+	struct file *fp = NULL;
+	int len, str_len = strlen(value);
+	loff_t pos;
+	mm_segment_t old_fs;
+
+	printk("pil_write_auth_result 1111111111\n"); ////----
+	fp = filp_open(auth_file_name, O_WRONLY|O_CREAT, 0666);
+	if(IS_ERR(fp)){
+		printk("pil_write_auth_result unable to open '%s'.\n", auth_file_name);
+		goto err_open;
+	}
+
+	pos = 0;
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	len = vfs_write(fp, value, str_len, &pos);
+	set_fs(old_fs);
+	if(len != str_len)
+	{
+		printk("pil_write_auth_result failed to read '%s'  %d  %s.\n", auth_file_name, len, value );
+		goto err_format;
+	}
+
+	filp_close(fp, NULL);
+	return 0;
+
+err_format:
+	filp_close(fp, NULL);
+err_open:
+	return -1;
+}
+
+static int pil_get_auth_result(char *auth_info)
+{
+	struct file *fp = NULL;
+	int len;
+	loff_t pos;
+	mm_segment_t old_fs;
+	char comm[50];
+
+	printk("pil_get_auth_result 222222222\n"); ////----
+	fp = filp_open(auth_file_name, O_RDWR, 0);
+	if(IS_ERR(fp)){
+		printk("pil_get_auth_result unable to open '%s'.\n", auth_file_name);
+		goto err_open;
+	}
+
+	pos = 0;
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	len = vfs_read(fp, comm, sizeof(comm) - 1, &pos);
+	set_fs(old_fs);
+	if(len < 0)
+	{
+		printk("pil_get_auth_result failed to read '%s'  %d  %s.\n", auth_file_name, len, comm);
+		goto err_format;
+	}
+
+	memcpy(auth_info, comm, strlen(comm));
+	filp_close(fp, NULL);
+	return 0;
+
+err_format:
+	filp_close(fp, NULL);
+err_open:
+	return -1;
+}
+
+//add end leiwen
+static int pil_proc_show(struct seq_file *m, void *v)
+{
+	char comm[50];
+	int result = 0;
+	
+	result = pil_get_auth_result(comm);
+	printk("pil_proc_show ret = %d, value = %s\n", result, comm); ////----
+	if (result >= 0)
+		seq_printf(m, "%s", comm);
+	else
+		seq_printf(m, "%s", "ok_value");
+
+	if (strstr(comm, "pil_auth_result") != NULL)
+		pil_write_auth_result("not_reset");
+	
+	return 0;
+}
+
+static int pil_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, pil_proc_show, NULL);
+}
+
+static const struct file_operations pil_proc_fops = {
+	.open		= pil_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int  pil_proc_init(void)
+{
+	struct proc_dir_entry *entry;
+
+	entry = proc_create("pil", 0, NULL, &pil_proc_fops);
+	if (entry == NULL)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static void  pil_proc_exit(void)
+{
+	remove_proc_entry("pil", NULL);
+}
+
+void pil_set_auth_value(int value)
+{
+	char comm1[50], comm2[50];
+	int result = 0;
+
+	printk("pil_set_auth_value value = %d\n", value); ////----
+	if (value > 0)
+	{
+		pil_get_auth_result(comm1);
+
+		sprintf(comm2, "pil_auth_result:%d", value);
+		result = pil_write_auth_result(comm2);
+		if (result < 0)
+			return;
+		
+		if (strstr(comm1, "not_reset") != NULL)
+			return;
+		
+		kernel_restart(NULL);
+	} else
+	{
+		pil_write_auth_result("ok_value");
+	}
+}
+
+// add by changshun.zhou for display auth failed prompt 20140115 end
 
 /**
  * pil_do_ramdump() - Ramdump an image
@@ -566,9 +721,18 @@ static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
 	if (desc->ops->verify_blob) {
 		ret = desc->ops->verify_blob(desc, seg->paddr, seg->sz);
 		if (ret)
-			pil_err(desc, "Blob%u failed verification\n", num);
+		{
+			printk("Blob%u failed verification\n", num);
+			// add by changshun.zhou for displaying the auth failed prompt 20140115 begin
+			#ifdef TCT_TARGET_JRDAUTH
+			if (! strcmp(desc->name, "modem"))
+			{
+				pil_set_auth_value(0);
+			}
+			#endif
+			// add by changshun.zhou for displaying the auth failed prompt 20140115 end
+		}
 	}
-
 	return ret;
 }
 
@@ -848,6 +1012,8 @@ static struct notifier_block pil_pm_notifier = {
 
 static int __init msm_pil_init(void)
 {
+       pil_proc_init(); // add by changshun.zhou for displaying auth failed prompt 20140115
+
 	ion = msm_ion_client_create(UINT_MAX, "pil");
 	if (IS_ERR(ion)) /* Can't support relocatable images */
 		ion = NULL;
@@ -857,6 +1023,8 @@ device_initcall(msm_pil_init);
 
 static void __exit msm_pil_exit(void)
 {
+	pil_proc_exit(); // add by changshun.zhou for displaying auth failed prompt 20140115
+
 	unregister_pm_notifier(&pil_pm_notifier);
 	if (ion)
 		ion_client_destroy(ion);

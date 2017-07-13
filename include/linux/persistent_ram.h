@@ -68,6 +68,8 @@ struct persistent_ram_zone {
 
 int persistent_ram_early_init(struct persistent_ram *ram);
 
+void persistent_ram_add(struct persistent_ram *ram);//add by jch for watch dog ramdump
+
 struct persistent_ram_zone *persistent_ram_init_ringbuffer(struct device *dev,
 		bool ecc);
 
@@ -79,5 +81,15 @@ void *persistent_ram_old(struct persistent_ram_zone *prz);
 void persistent_ram_free_old(struct persistent_ram_zone *prz);
 ssize_t persistent_ram_ecc_string(struct persistent_ram_zone *prz,
 	char *str, size_t len);
-
+//add by jch for watch dog ramdump
+#define CONFIG_ANDROID_PERSISTENT_RAM_EXT_BUF 1
+#ifdef CONFIG_ANDROID_PERSISTENT_RAM_EXT_BUF
+int persistent_ram_ext_oldbuf_print(const char *fmt, ...);
+void persistent_ram_ext_oldbuf_merge(struct persistent_ram_zone *prz);
+#else
+static inline void persistent_ram_ext_oldbuf_print(const char *fmt, ...) { };
+static inline void persistent_ram_ext_oldbuf_merge(
+			struct persistent_ram_zone *prz) { };
+#endif
+//end add by jch
 #endif

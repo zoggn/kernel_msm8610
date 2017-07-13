@@ -16,6 +16,14 @@
 #include <linux/list.h>
 #include <linux/rbtree.h>
 #include <linux/slab.h>
+//mingquan.lai add suspend/resume log 20131227
+int userwakelock_debug_mask;
+#define wl_usr_info(fmt, ...) \
+	do { \
+		if (userwakelock_debug_mask) { \
+			printk(fmt, ##__VA_ARGS__); \
+		} \
+	} while (0)
 
 static DEFINE_MUTEX(wakelocks_lock);
 
@@ -201,6 +209,8 @@ int pm_wake_lock(const char *buf)
 		if (ret)
 			return -EINVAL;
 	}
+	//mingquan.lai add suspend/resume log 20131227 end
+	wl_usr_info("[user_wake_lock] %s\n",buf);
 
 	mutex_lock(&wakelocks_lock);
 
@@ -240,6 +250,8 @@ int pm_wake_unlock(const char *buf)
 
 	if (!len)
 		return -EINVAL;
+	//mingquan.lai add suspend/resume log 20131227 end
+	wl_usr_info("[user_wake_unlock] %s\n",buf);
 
 	mutex_lock(&wakelocks_lock);
 

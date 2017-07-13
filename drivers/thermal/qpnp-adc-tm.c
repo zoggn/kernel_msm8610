@@ -1645,8 +1645,8 @@ int32_t qpnp_adc_tm_channel_measure(struct qpnp_adc_tm_chip *chip,
 		rc = -EBADF;
 		goto fail_unlock;
 	}
-
-	pr_debug("channel:%d, scale_type:%d, dt_idx:%d",
+	if(channel!=VBAT_SNS)// [PLATFORM]-Change by TCTSZ.cuiping.shi, for print log, 2014/04/02
+	pr_info("ADC_TM  channel:%d, scale_type:%d, dt_idx:%d\n",
 					channel, scale_type, dt_index);
 	chip->adc->amux_prop->amux_channel = channel;
 	chip->adc->amux_prop->decimation =

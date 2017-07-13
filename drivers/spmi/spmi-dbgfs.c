@@ -45,6 +45,10 @@
 
 static const char *DFS_ROOT_NAME	= "spmi";
 static const mode_t DFS_MODE = S_IRUSR | S_IWUSR;
+/*follows add by rongxiao.deng for engineer mode*********/
+static int ldo_status_reg[22] = {0x14009,0x14109,0x14209,0x14309,0x14409,0x14509,0x14609,0x14709,
+				0x14809,0x14909,0x14A09,0x14B09,0x14C09,0x14D09,0x14E09,0x14F09,
+				0x15009,0x15109,0x15209,0x15309,0x15409,0x15509}; 
 
 /* Log buffer */
 struct spmi_log_buffer {
@@ -189,6 +193,13 @@ static int spmi_dfs_raw_data_open(struct inode *inode, struct file *file)
 	trans = file->private_data;
 	trans->raw_data = true;
 	return rc;
+}
+
+/*follows add by rongxiao.deng for engineer mode*/
+static int spmi_dfs_ldo_register_open(struct inode *inode, struct file *file)
+{
+	struct spmi_ctrl_data *ctrl_data = inode->i_private;
+	return spmi_dfs_open(ctrl_data, file);
 }
 
 static int spmi_dfs_close(struct inode *inode, struct file *file)
@@ -559,6 +570,58 @@ static ssize_t spmi_dfs_reg_read(struct file *file, char __user *buf,
 	return len;
 }
 
+/*follows added by rongxiao.deng for engineer mode*/
+
+static int global_value = 1;
+
+static ssize_t spmi_dfs_ldo_reg_read(struct file *file, char __user *buf,
+	size_t count, loff_t *ppos)
+{
+	struct spmi_trans *trans = file->private_data;
+	size_t ret;
+	int offset;
+        uint8_t sid;
+        uint16_t addr;
+	char kernel_buf[22];
+	char ldo[22];
+	int i;
+	count = 22;
+
+	for(i=0;i<=21;i++)
+	{
+		offset = ldo_status_reg[i];
+		sid = (offset >> 16) & 0xF;
+		addr = offset & 0xFFFF;
+		ret = spmi_ext_register_readl(trans->ctrl, sid, addr, &kernel_buf[i], 1);
+		if (ret < 0) {
+			pr_err("SPMI write failed, err = %d\n", ret);
+			goto done;
+		}
+		kernel_buf[i] &= 0x20;
+		ldo[i] = kernel_buf[i] >> 5;
+		ldo[i] += 48;
+	}
+	if(!global_value)
+	{
+		global_value = 1;
+		return 0;
+	}
+	
+	ret = copy_to_user(buf, &ldo[0], count);
+	if (ret != 0) {
+		pr_err("error copy SPMI register values to user\n");
+		return -EFAULT;
+	}
+
+	*ppos += count;
+	global_value--;
+		
+	return count; 
+
+done:
+	return ret;
+}
+
 static const struct file_operations spmi_dfs_reg_fops = {
 	.open		= spmi_dfs_data_open,
 	.release	= spmi_dfs_close,
@@ -571,6 +634,13 @@ static const struct file_operations spmi_dfs_raw_data_fops = {
 	.release	= spmi_dfs_close,
 	.read		= spmi_dfs_reg_read,
 	.write		= spmi_dfs_reg_write,
+};
+
+/*follows add by rongxiao.deng for engineer mode*/
+static const struct file_operations spmi_dfs_ldo_register_fops = {
+	.open		= spmi_dfs_ldo_register_open,
+	.release	= spmi_dfs_close,
+	.read		= spmi_dfs_ldo_reg_read,
 };
 
 /**
@@ -680,6 +750,14 @@ int spmi_dfs_add_controller(struct spmi_controller *ctrl)
 
 	file = debugfs_create_file("data_raw", DFS_MODE, dir, ctrl_data,
 						&spmi_dfs_raw_data_fops);
+	if (!file) {
+		pr_err("error creating 'data' entry\n");
+		goto err_remove_fs;
+	}
+	
+/*foloows add by rongxiao.deng for engineer mode*/
+	file = debugfs_create_file("ldo_register", DFS_MODE, dir, ctrl_data,
+						&spmi_dfs_ldo_register_fops);
 	if (!file) {
 		pr_err("error creating 'data' entry\n");
 		goto err_remove_fs;

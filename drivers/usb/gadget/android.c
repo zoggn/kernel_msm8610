@@ -105,6 +105,7 @@ static const char longname[] = "Gadget Android";
 #define PRODUCT_ID		0x0001
 
 #define ANDROID_DEVICE_NODE_NAME_LENGTH 11
+#define CDROM_SUPORT 1 //add by yijun.liu for PR594730 at 2013-2-14.
 
 struct android_usb_function {
 	char *name;
@@ -1765,7 +1766,9 @@ struct mass_storage_function_config {
 static int mass_storage_function_init(struct android_usb_function *f,
 					struct usb_composite_dev *cdev)
 {
+       #if defined(CDROM_SUPORT) || defined(MULTI_STORAGE)  //add by jch for remove MULTI_STORAGE and  CDROM
 	struct android_dev *dev = cdev_to_android_dev(cdev);
+	#endif  //add by jch for remove MULTI_STORAGE and  CDROM   
 	struct mass_storage_function_config *config;
 	struct fsg_common *common;
 	int err;
@@ -1778,7 +1781,8 @@ static int mass_storage_function_init(struct android_usb_function *f,
 		return -ENOMEM;
 
 	config->fsg.nluns = 1;
-	name[0] = "lun";
+	name[0] = "lun";	
+      #ifdef CDROM_SUPORT //add by jch for remove MULTI_STORAGE and  CDROM
 	if (dev->pdata && dev->pdata->cdrom) {
 		config->fsg.luns[config->fsg.nluns].cdrom = 1;
 		config->fsg.luns[config->fsg.nluns].ro = 1;
@@ -1786,6 +1790,8 @@ static int mass_storage_function_init(struct android_usb_function *f,
 		name[config->fsg.nluns] = "lun0";
 		config->fsg.nluns++;
 	}
+	#endif  //add by jch for remove MULTI_STORAGE and  CDROM
+	#ifdef MULTI_STORAGE //add by jch for remove MULTI_STORAGE and  CDROM
 	if (dev->pdata && dev->pdata->internal_ums) {
 		config->fsg.luns[config->fsg.nluns].cdrom = 0;
 		config->fsg.luns[config->fsg.nluns].ro = 0;
@@ -1793,7 +1799,7 @@ static int mass_storage_function_init(struct android_usb_function *f,
 		name[config->fsg.nluns] = "lun1";
 		config->fsg.nluns++;
 	}
-
+       #endif  //add by jch for remove MULTI_STORAGE and  CDROM
 	config->fsg.luns[0].removable = 1;
 
 	common = fsg_common_init(NULL, cdev, &config->fsg);

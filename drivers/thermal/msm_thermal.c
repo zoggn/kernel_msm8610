@@ -30,7 +30,6 @@
 #include <linux/of.h>
 #include <linux/sysfs.h>
 #include <linux/types.h>
-#include <linux/io.h>
 #include <linux/android_alarm.h>
 #include <linux/thermal.h>
 #include <mach/cpufreq.h>
@@ -40,8 +39,6 @@
 
 #define MAX_RAILS 5
 #define MAX_THRESHOLD 2
-#define BYTES_PER_FUSE_ROW  8
-#define MAX_EFUSE_VALUE  16
 
 static struct msm_thermal_data msm_thermal_info;
 static uint32_t limited_max_freq = UINT_MAX;
@@ -78,10 +75,6 @@ static bool hotplug_enabled;
 static int *tsens_id_map;
 static DEFINE_MUTEX(vdd_rstr_mutex);
 static DEFINE_MUTEX(psm_mutex);
-static uint32_t default_cpu_temp_limit;
-static bool default_temp_limit_enabled;
-static bool default_temp_limit_probed;
-static bool default_temp_limit_nodes_called;
 
 struct cpu_info {
 	uint32_t cpu;
@@ -122,15 +115,6 @@ static struct cpu_info cpus[NR_CPUS];
 struct vdd_rstr_enable {
 	struct kobj_attribute ko_attr;
 	uint32_t enabled;
-};
-
-enum efuse_data {
-	EFUSE_ADDRESS = 0,
-	EFUSE_SIZE,
-	EFUSE_ROW,
-	EFUSE_START_BIT,
-	EFUSE_BIT_MASK,
-	EFUSE_DATA_MAX,
 };
 
 /* For SMPS only*/
@@ -317,12 +301,6 @@ static int psm_set_mode_all(int mode)
 	}
 
 	return fail_cnt ? (-EFAULT) : ret;
-}
-
-static ssize_t default_cpu_temp_limit_show(struct kobject *kobj,
-	struct kobj_attribute *attr, char *buf)
-{
-	return snprintf(buf, PAGE_SIZE, "%d\n", default_cpu_temp_limit);
 }
 
 static int vdd_rstr_en_show(
@@ -634,12 +612,15 @@ static int update_cpu_max_freq(int cpu, uint32_t max_freq)
 {
 	int ret = 0;
 
+// [PLATFORM]-Change-BEGIN by TCTSZ.cuiping.shi, for cpu thermal, 2014/03/31
 	if (max_freq != UINT_MAX)
-		pr_info("%s: Limiting cpu%d max frequency to %d\n",
-				KBUILD_MODNAME, cpu, max_freq);
+		pr_info("%s: Limiting cpu%d max frequency to %d, limit_temp_degC:%d\n",
+				KBUILD_MODNAME, cpu, max_freq,msm_thermal_info.limit_temp_degC);
 	else
-		pr_info("%s: Max frequency reset for cpu%d\n",
-				KBUILD_MODNAME, cpu);
+		pr_info("%s: Max frequency reset for cpu%d, limit_temp_degC:%d\n",
+				KBUILD_MODNAME, cpu, msm_thermal_info.limit_temp_degC);
+// [PLATFORM]-Change-END by TCTSZ.cuiping.shi, 2014/03/31
+
 	get_online_cpus();
 	for_each_online_cpu(cpu) {
 		if (cpufreq_update_policy(cpu))
@@ -946,9 +927,18 @@ static void __ref do_freq_control(long temp)
 			return;
 
 		limit_idx -= msm_thermal_info.freq_step;
-		if (limit_idx < limit_idx_low)
+// [PLATFORM]-Change-BEGIN by TCTSZ.cuiping.shi, for cpu thermal, 2014/03/31
+		if (limit_idx < limit_idx_low){
 			limit_idx = limit_idx_low;
+			msm_thermal_info.limit_temp_degC=msm_thermal_info.core_limit_temp_degC;
+		}
+// [PLATFORM]-Change-END by TCTSZ.cuiping.shi,  2014/03/31
 		max_freq = table[limit_idx].frequency;
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for cpu thermal, 2014/03/31
+		msm_thermal_info.limit_temp_degC+=msm_thermal_info.temp_hysteresis_degC*msm_thermal_info.freq_step/2;
+		if(msm_thermal_info.limit_temp_degC>msm_thermal_info.core_limit_temp_degC)
+			msm_thermal_info.limit_temp_degC=msm_thermal_info.core_limit_temp_degC;
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi,  2014/03/31
 	} else if (temp < msm_thermal_info.limit_temp_degC -
 		 msm_thermal_info.temp_hysteresis_degC) {
 		if (limit_idx == limit_idx_high)
@@ -958,8 +948,16 @@ static void __ref do_freq_control(long temp)
 		if (limit_idx >= limit_idx_high) {
 			limit_idx = limit_idx_high;
 			max_freq = UINT_MAX;
-		} else
+// [PLATFORM] by TCTSZ.cuiping.shi, for cpu thermal, 2014/03/31
+			msm_thermal_info.limit_temp_degC=msm_thermal_info.limit_temp_degC_default;
+		} else{
 			max_freq = table[limit_idx].frequency;
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for cpu thermal, 2014/03/31
+			msm_thermal_info.limit_temp_degC-=msm_thermal_info.temp_hysteresis_degC*msm_thermal_info.freq_step/2;
+			if(msm_thermal_info.limit_temp_degC<msm_thermal_info.limit_temp_degC_default)
+				msm_thermal_info.limit_temp_degC=msm_thermal_info.limit_temp_degC_default;
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi,  2014/03/31
+		}
 	}
 
 	if (max_freq == limited_max_freq)
@@ -979,10 +977,20 @@ static void __ref check_temp(struct work_struct *work)
 	static int limit_init;
 	struct tsens_device tsens_dev;
 	long temp = 0;
+	long temp_now=0; // [PLATFORM] by TCTSZ.cuiping.shi, for cpu thermal, 2014/03/31
 	int ret = 0;
 
 	tsens_dev.sensor_num = msm_thermal_info.sensor_id;
-	ret = tsens_get_temp(&tsens_dev, &temp);
+// [PLATFORM]-Change-BEGIN by TCTSZ.cuiping.shi, for cpu thermal, 2014/03/31
+	//ret = tsens_get_temp(&tsens_dev, &temp);
+	ret = tsens_get_temp(&tsens_dev, &temp_now);
+	temp+=temp_now;
+	ret = tsens_get_temp(&tsens_dev, &temp_now);
+	temp+=temp_now;
+	ret = tsens_get_temp(&tsens_dev, &temp_now);
+	temp+=temp_now;
+	temp /= 3;
+// [PLATFORM]-Change-END by TCTSZ.cuiping.shi, 2014/03/31
 	if (ret) {
 		pr_debug("%s: Unable to read TSENS sensor %d\n",
 				KBUILD_MODNAME, tsens_dev.sensor_num);
@@ -1557,38 +1565,6 @@ psm_reg_exit:
 	return ret;
 }
 
-static struct kobj_attribute default_cpu_temp_limit_attr =
-		__ATTR_RO(default_cpu_temp_limit);
-
-static int msm_thermal_add_default_temp_limit_nodes(void)
-{
-	struct kobject *module_kobj = NULL;
-	int ret = 0;
-
-	if (!default_temp_limit_probed) {
-		default_temp_limit_nodes_called = true;
-		return ret;
-	}
-	if (!default_temp_limit_enabled)
-		return ret;
-
-	module_kobj = kset_find_obj(module_kset, KBUILD_MODNAME);
-	if (!module_kobj) {
-		pr_err("cannot find kobject\n");
-		return -ENOENT;
-	}
-
-	sysfs_attr_init(&default_cpu_temp_limit_attr.attr);
-	ret = sysfs_create_file(module_kobj, &default_cpu_temp_limit_attr.attr);
-	if (ret) {
-		pr_err(
-		"cannot create default_cpu_temp_limit attribute. err:%d\n",
-		ret);
-		return ret;
-	}
-	return ret;
-}
-
 static int msm_thermal_add_vdd_rstr_nodes(void)
 {
 	struct kobject *module_kobj = NULL;
@@ -1843,169 +1819,6 @@ read_node_fail:
 	return ret;
 }
 
-static int get_efuse_temp_map(struct device_node *node,
-				int *efuse_values,
-				int *efuse_temp)
-{
-	uint32_t i, j, efuse_arr_cnt = 0;
-	int ret = 0, efuse_map_cnt = 0;
-	uint32_t data[2 * MAX_EFUSE_VALUE];
-
-	char *key = "qcom,efuse-temperature-map";
-	if (!of_get_property(node, key, &efuse_map_cnt)
-		|| efuse_map_cnt <= 0) {
-		pr_debug("Property %s not defined.\n", key);
-		return -ENODEV;
-	}
-
-	if (efuse_map_cnt % (sizeof(__be32) * 2)) {
-		pr_err("Invalid number(%d) of entry for %s\n",
-				efuse_map_cnt, key);
-		return -EINVAL;
-	}
-
-	efuse_arr_cnt = efuse_map_cnt / sizeof(__be32);
-
-	ret = of_property_read_u32_array(node, key, data, efuse_arr_cnt);
-	if (ret)
-		return -EINVAL;
-
-	efuse_map_cnt /= (sizeof(__be32) * 2);
-
-	j = 0;
-	for (i = 0; i < efuse_map_cnt; i++) {
-		efuse_values[i] = data[j++];
-		efuse_temp[i] = data[j++];
-	}
-
-	return efuse_map_cnt;
-}
-
-static int probe_thermal_efuse_read(struct device_node *node,
-			struct msm_thermal_data *data,
-			struct platform_device *pdev)
-{
-	u64 efuse_bits;
-	int ret = 0;
-	int i = 0;
-	int efuse_map_cnt = 0;
-	int efuse_data_cnt = 0;
-	char *key = NULL;
-	void __iomem *efuse_base = NULL;
-	uint32_t efuse_data[EFUSE_DATA_MAX] = {0};
-	uint32_t efuse_values[MAX_EFUSE_VALUE] = {0};
-	uint32_t efuse_temp[MAX_EFUSE_VALUE] = {0};
-	uint32_t default_temp = 0;
-	uint8_t thermal_efuse_data = 0;
-
-	if (default_temp_limit_probed)
-		goto read_efuse_exit;
-
-	key = "qcom,default-temp";
-	if (of_property_read_u32(node, key, &default_temp))
-		default_temp = 0;
-
-	default_cpu_temp_limit = default_temp;
-
-	key = "qcom,efuse-data";
-	if (!of_get_property(node, key, &efuse_data_cnt) ||
-		efuse_data_cnt <= 0) {
-		ret = -ENODEV;
-		goto read_efuse_fail;
-	}
-	efuse_data_cnt /= sizeof(__be32);
-
-	if (efuse_data_cnt != EFUSE_DATA_MAX) {
-		pr_err("Invalid number of efuse data. data cnt %d\n",
-			efuse_data_cnt);
-		ret = -EINVAL;
-		goto read_efuse_fail;
-	}
-
-	ret = of_property_read_u32_array(node, key, efuse_data,
-						efuse_data_cnt);
-	if (ret)
-		goto read_efuse_fail;
-
-	if (efuse_data[EFUSE_ADDRESS] == 0 ||
-		efuse_data[EFUSE_SIZE] == 0 ||
-		efuse_data[EFUSE_BIT_MASK] == 0) {
-		pr_err("Invalid efuse data: address:%x len:%d bitmask%x\n",
-			efuse_data[EFUSE_ADDRESS], efuse_data[EFUSE_SIZE],
-			efuse_data[EFUSE_BIT_MASK]);
-		ret = -EINVAL;
-		goto read_efuse_fail;
-	}
-
-	efuse_map_cnt = get_efuse_temp_map(node, efuse_values,
-						efuse_temp);
-	if (efuse_map_cnt <= 0 ||
-		efuse_map_cnt > (efuse_data[EFUSE_BIT_MASK] + 1)) {
-		pr_err("Invalid efuse-temperature-map. cnt%d\n",
-			efuse_map_cnt);
-		ret = -EINVAL;
-		goto read_efuse_fail;
-	}
-
-	efuse_base = ioremap(efuse_data[EFUSE_ADDRESS], efuse_data[EFUSE_SIZE]);
-	if (!efuse_base) {
-		pr_err("Unable to map efuse_addr:%x with size%d\n",
-			efuse_data[EFUSE_ADDRESS],
-			efuse_data[EFUSE_SIZE]);
-		ret = -EINVAL;
-		goto read_efuse_fail;
-	}
-
-	efuse_bits = readll_relaxed(efuse_base
-		+ efuse_data[EFUSE_ROW] * BYTES_PER_FUSE_ROW);
-
-	thermal_efuse_data = (efuse_bits >> efuse_data[EFUSE_START_BIT]) &
-						efuse_data[EFUSE_BIT_MASK];
-
-	/* Get cpu limit temp from efuse truth table */
-	for (; i < efuse_map_cnt; i++) {
-		if (efuse_values[i] == thermal_efuse_data) {
-			default_cpu_temp_limit = efuse_temp[i];
-			break;
-		}
-	}
-	if (i >= efuse_map_cnt) {
-		if (!default_temp) {
-			pr_err("No matching efuse value. value:%d\n",
-				thermal_efuse_data);
-			ret = -EINVAL;
-			goto read_efuse_fail;
-		}
-	}
-
-	pr_debug(
-	"Efuse address:0x%x [row:%d] = 0x%llx @%d:mask:0x%x = 0x%x temp:%d\n",
-		efuse_data[EFUSE_ADDRESS], efuse_data[EFUSE_ROW], efuse_bits,
-		efuse_data[EFUSE_START_BIT], efuse_data[EFUSE_BIT_MASK],
-		thermal_efuse_data, default_cpu_temp_limit);
-
-	default_temp_limit_enabled = true;
-
-read_efuse_fail:
-	if (efuse_base)
-		iounmap(efuse_base);
-	default_temp_limit_probed = true;
-	if (ret) {
-		if (!default_temp) {
-			dev_info(&pdev->dev,
-			"%s:Failed reading node=%s, key=%s. KTM continues\n",
-				__func__, node->full_name, key);
-		} else {
-			default_temp_limit_enabled = true;
-			pr_debug("Default cpu temp limit is %d\n",
-					default_cpu_temp_limit);
-			ret = 0;
-		}
-	}
-read_efuse_exit:
-	return ret;
-}
-
 static int probe_psm(struct device_node *node, struct msm_thermal_data *data,
 		struct platform_device *pdev)
 {
@@ -2107,7 +1920,7 @@ static int probe_cc(struct device_node *node, struct msm_thermal_data *data,
 
 	key = "qcom,cpu-sensors";
 	cpu_cnt = of_property_count_strings(node, key);
-	if (cpu_cnt != num_possible_cpus()) {
+	if (cpu_cnt != num_possible_cpus()&& cpu_cnt != (2*num_possible_cpus()) ) { // change by shicuiping
 		pr_err("%s: Wrong number of cpu\n", KBUILD_MODNAME);
 		ret = -EINVAL;
 		goto hotplug_node_fail;
@@ -2167,6 +1980,7 @@ static int __devinit msm_thermal_dev_probe(struct platform_device *pdev)
 	ret = of_property_read_u32(node, key, &data.limit_temp_degC);
 	if (ret)
 		goto fail;
+	data.limit_temp_degC_default=data.limit_temp_degC;// [PLATFORM]-Add by TCTSZ.cuiping.shi, for cpu thermal, 2014/03/31
 
 	key = "qcom,temp-hysteresis";
 	ret = of_property_read_u32(node, key, &data.temp_hysteresis_degC);
@@ -2193,7 +2007,6 @@ static int __devinit msm_thermal_dev_probe(struct platform_device *pdev)
 	ret = probe_vdd_rstr(node, &data, pdev);
 	if (ret == -EPROBE_DEFER)
 		goto fail;
-	probe_thermal_efuse_read(node, &data, pdev);
 
 	/*
 	 * In case sysfs add nodes get called before probe function.
@@ -2206,10 +2019,6 @@ static int __devinit msm_thermal_dev_probe(struct platform_device *pdev)
 	if (vdd_rstr_nodes_called) {
 		msm_thermal_add_vdd_rstr_nodes();
 		vdd_rstr_nodes_called = false;
-	}
-	if (default_temp_limit_nodes_called) {
-		msm_thermal_add_default_temp_limit_nodes();
-		default_temp_limit_nodes_called = false;
 	}
 	ret = msm_thermal_init(&data);
 
@@ -2248,7 +2057,6 @@ int __init msm_thermal_late_init(void)
 		msm_thermal_add_cc_nodes();
 	msm_thermal_add_psm_nodes();
 	msm_thermal_add_vdd_rstr_nodes();
-	msm_thermal_add_default_temp_limit_nodes();
 	alarm_init(&thermal_rtc, ANDROID_ALARM_ELAPSED_REALTIME_WAKEUP,
 			thermal_rtc_callback);
 	INIT_WORK(&timer_work, timer_work_fn);

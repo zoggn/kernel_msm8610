@@ -48,6 +48,10 @@ struct msm_sensor_fn_t {
 		(struct msm_sensor_ctrl_t *);
 	int (*sensor_power_up) (struct msm_sensor_ctrl_t *);
 	int32_t (*sensor_match_id)(struct msm_sensor_ctrl_t *s_ctrl);
+//Begin add by weicai.long@tcl.com for camera OTP feature, 2013/12/24.
+	int (*otp_config) (struct msm_sensor_ctrl_t *, void __user *);
+	int (*otp_clearbuff_config) (struct msm_sensor_ctrl_t *, void __user *);
+//End add by weicai.long@tcl.com for camera OTP feature, 2013/12/24.
 };
 
 struct msm_sensor_ctrl_t {

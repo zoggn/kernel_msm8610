@@ -49,6 +49,33 @@
 #endif
 
 static uint32_t lowmem_debug_level = 1;
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05
+#ifdef CONFIG_ZRAM
+static int lowmem_adj[9] = {
+	0,
+	1,
+	2,
+	4,
+	6,
+	8,
+	9,
+	12,
+	15,
+};
+static int lowmem_adj_size = 9;
+static int lowmem_minfree[9] = {
+	4 * 256,	/* 4MB */
+	12 * 256,	/* 12MB */
+	16 * 256,	/* 16MB */
+	24 * 256,	/* 24MB */
+	28 * 256,	/* 28MB */
+	32 * 256,	/* 32MB */
+	36 * 256,	/* 36MB */
+	40 * 256,	/* 40MB */
+	48 * 256,	/* 48MB */
+};
+static int lowmem_minfree_size = 9;
+#else // CONFIG_ZRAM
 static int lowmem_adj[6] = {
 	0,
 	1,
@@ -63,8 +90,11 @@ static int lowmem_minfree[6] = {
 	16 * 1024,	/* 64MB */
 };
 static int lowmem_minfree_size = 4;
+#endif // CONFIG_ZRAM
 static int lmk_fast_run = 1;
 
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05
+static struct task_struct *lowmem_deathpending;
 static unsigned long lowmem_deathpending_timeout;
 
 #define lowmem_print(level, x...)			\
@@ -72,6 +102,28 @@ static unsigned long lowmem_deathpending_timeout;
 		if (lowmem_debug_level >= (level))	\
 			printk(x);			\
 	} while (0)
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 begin
+static int
+task_notify_func(struct notifier_block *self, unsigned long val, void *data);
+
+static struct notifier_block task_nb = {
+	.notifier_call  = task_notify_func,
+};
+
+static int
+task_notify_func(struct notifier_block *self, unsigned long val, void *data)
+{
+	struct task_struct *task = data;
+	
+//	if(task != NULL && lowmem_deathpending != NULL)
+//		lowmem_print(1, "task_notify_func receive: %d, %d\n", task->pid, lowmem_deathpending->pid);
+	
+	if (task == lowmem_deathpending)
+		lowmem_deathpending = NULL;
+	
+	return NOTIFY_DONE;
+}
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 end
 
 static int test_task_flag(struct task_struct *p, int flag)
 {
@@ -240,6 +292,19 @@ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
 	int other_free;
 	int other_file;
 	unsigned long nr_to_scan = sc->nr_to_scan;
+//ying.pang for swap optimize begin
+	// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05
+	/*
+	 * If we already have a death outstanding, then
+	 * bail out right away; indicating to vmscan
+	 * that we have nothing further to offer on
+	 * this pass.
+	 *
+	 */
+	if (lowmem_deathpending &&
+		time_before_eq(jiffies, lowmem_deathpending_timeout))
+		return 0;
+//ying.pang for swap optimize end			
 
 	if (nr_to_scan > 0) {
 		if (mutex_lock_interruptible(&scan_mutex) < 0)
@@ -247,15 +312,21 @@ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
 	}
 
 	other_free = global_page_state(NR_FREE_PAGES);
-
-	if (global_page_state(NR_SHMEM) + total_swapcache_pages <
+//ying.pang for swap optimize begin
+	/*if (global_page_state(NR_SHMEM) + total_swapcache_pages <
 		global_page_state(NR_FILE_PAGES))
 		other_file = global_page_state(NR_FILE_PAGES) -
 						global_page_state(NR_SHMEM) -
 						total_swapcache_pages;
 	else
 		other_file = 0;
-
+   */
+   	other_file = global_page_state(NR_FILE_PAGES) - global_page_state(NR_SHMEM);
+	
+#ifdef CONFIG_ZRAM
+	other_file -= total_swapcache_pages;
+#endif	
+   //ying.pang for swap optimize end
 	tune_lmk_param(&other_free, &other_file, sc);
 
 	if (lowmem_adj_size < array_size)
@@ -313,13 +384,20 @@ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
 		p = find_lock_task_mm(tsk);
 		if (!p)
 			continue;
-
-		oom_score_adj = p->signal->oom_score_adj;
+//ying.pang for swap optimize begin
+		// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 begin
+		// oom_score_adj = p->signal->oom_score_adj;
+		oom_score_adj = p->signal->oom_adj;
 		if (oom_score_adj < min_score_adj) {
 			task_unlock(p);
 			continue;
 		}
+#ifdef CONFIG_ZRAM
+		tasksize = get_mm_rss(p->mm) + get_mm_counter(p->mm, MM_SWAPENTS);
+#else
 		tasksize = get_mm_rss(p->mm);
+#endif
+//ying.pang for swap optimize end
 		task_unlock(p);
 		if (tasksize <= 0)
 			continue;
@@ -340,6 +418,9 @@ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
 		lowmem_print(1, "send sigkill to %d (%s), adj %d, size %d\n",
 			     selected->pid, selected->comm,
 			     selected_oom_score_adj, selected_tasksize);
+		//ying.pang for swap optimize begin
+		lowmem_deathpending = selected;
+		//ying.pang for swap optimize end
 		lowmem_deathpending_timeout = jiffies + HZ;
 		send_sig(SIGKILL, selected, 0);
 		set_tsk_thread_flag(selected, TIF_MEMDIE);
@@ -363,6 +444,12 @@ static struct shrinker lowmem_shrinker = {
 
 static int __init lowmem_init(void)
 {
+//ying.pang for swap optimize begin
+#ifdef CONFIG_ZRAM
+	vm_swappiness = 100;
+#endif
+	task_free_register(&task_nb);
+//ying.pang for swap optimize end
 	register_shrinker(&lowmem_shrinker);
 	return 0;
 }
@@ -370,6 +457,9 @@ static int __init lowmem_init(void)
 static void __exit lowmem_exit(void)
 {
 	unregister_shrinker(&lowmem_shrinker);
+	//ying.pang for swap optimize begin
+	task_free_unregister(&task_nb);
+	//ying.pang for swap optimize end
 }
 
 #ifdef CONFIG_ANDROID_LOW_MEMORY_KILLER_AUTODETECT_OOM_ADJ_VALUES

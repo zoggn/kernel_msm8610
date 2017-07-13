@@ -1005,7 +1005,7 @@ static const struct proto_ops caif_stream_ops = {
 	.mmap = sock_no_mmap,
 	.sendpage = sock_no_sendpage,
 };
-
+// sync moto-g code by zhoujinggao
 /* This function is called when a socket is finally destroyed. */
 static void caif_sock_destructor(struct sock *sk)
 {
@@ -1014,7 +1014,7 @@ static void caif_sock_destructor(struct sock *sk)
 	caif_assert(sk_unhashed(sk));
 	caif_assert(!sk->sk_socket);
 	if (!sock_flag(sk, SOCK_DEAD)) {
-		WARN(1, "Attempt to release alive CAIF socket: %p\n", sk);
+		pr_debug("Attempt to release alive CAIF socket: %p\n", sk);
 		return;
 	}
 	sk_stream_kill_queues(&cf_sk->sk);

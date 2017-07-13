@@ -26,7 +26,7 @@
 #include <sound/jack.h>
 #include <asm/mach-types.h>
 #include <mach/socinfo.h>
-#include <qdsp6v2/msm-pcm-routing-v2.h>
+#include "qdsp6v2/msm-pcm-routing-v2.h"
 #include <sound/q6afe-v2.h>
 #include <linux/module.h>
 #include <mach/gpiomux.h>
@@ -74,6 +74,10 @@ static struct wcd9xxx_mbhc_config mbhc_cfg = {
 	.insert_detect = true,
 	.swap_gnd_mic = NULL,
 	.use_int_rbias = false,
+	// add by changshun.zhou modify for playing music noise by headset 20140110 begin
+	.micbias_enable_flags = 1 << MBHC_MICBIAS_ENABLE_THRESHOLD_HEADSET |
+	                                    1 << MBHC_MICBIAS_ENABLE_REGULAR_HEADSET,
+	// add by changshun.zhou modify for playing music noise by headset 20140110 end
 	.cs_enable_flags = (1 << MBHC_CS_ENABLE_POLLING |
 			    1 << MBHC_CS_ENABLE_INSERTION |
 			    1 << MBHC_CS_ENABLE_REMOVAL),
@@ -520,6 +524,7 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	if (ret < 0)
 		return ret;
 
+    return ret;
 exit:
 	if (gpio_is_valid(ext_spk_amp_gpio))
 		gpio_free(ext_spk_amp_gpio);

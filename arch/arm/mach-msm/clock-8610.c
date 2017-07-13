@@ -557,7 +557,6 @@ static struct pll_freq_tbl apcs_pll_freq[] = {
 	F_APCS_PLL( 768000000, 40, 0x0, 0x1, 0x0, 0x0, 0x0),
 	F_APCS_PLL( 787200000, 41, 0x0, 0x1, 0x0, 0x0, 0x0),
 	F_APCS_PLL( 998400000, 52, 0x0, 0x1, 0x0, 0x0, 0x0),
-	F_APCS_PLL(1094400000, 57, 0x0, 0x1, 0x0, 0x0, 0x0),
 	F_APCS_PLL(1190400000, 62, 0x0, 0x1, 0x0, 0x0, 0x0),
 	PLL_F_END
 };
@@ -2902,7 +2901,10 @@ static struct clk_lookup msm_clocks_8610[] = {
 	CLK_LOOKUP("iface_clk",           gcc_blsp1_ahb_clk.c, "f9926000.spi"),
 	CLK_LOOKUP("core_clk",  gcc_blsp1_qup1_i2c_apps_clk.c, "f9923000.i2c"),
 	CLK_LOOKUP("core_clk",  gcc_blsp1_qup1_spi_apps_clk.c, ""),
-	CLK_LOOKUP("core_clk",  gcc_blsp1_qup2_i2c_apps_clk.c, "f9924000.i2c"),
+//Begin-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
+    CLK_LOOKUP("iface_clk",           gcc_blsp1_ahb_clk.c, "f9924000.i2c"),
+    CLK_LOOKUP("core_clk",  gcc_blsp1_qup2_i2c_apps_clk.c, "f9924000.i2c"),
+//End-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
 	CLK_LOOKUP("core_clk",  gcc_blsp1_qup2_spi_apps_clk.c, ""),
 	CLK_LOOKUP("core_clk",  gcc_blsp1_qup3_i2c_apps_clk.c, "f9925000.i2c"),
 	CLK_LOOKUP("core_clk",  gcc_blsp1_qup3_spi_apps_clk.c, ""),
@@ -3031,6 +3033,14 @@ static struct clk_lookup msm_clocks_8610[] = {
 	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-006d"),
 	CLK_LOOKUP("cam_src_clk", mclk1_clk_src.c, "6-0078"),
 	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0020"),
+//Begin add by weicai.long@tcl.com for camera mclk, 2013/11/07.
+    CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-006c"),
+    CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-006c"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0030"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0030"),
+	CLK_LOOKUP("cam_src_clk", mclk1_clk_src.c, "6-0042"),
+	CLK_LOOKUP("cam_clk", mclk1_clk.c, "6-0042"),
+//End add by weicai.long@tcl.com for camera mclk, 2013/11/07.
 	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-006a"),
 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-006f"),
 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0034"),

@@ -341,6 +341,8 @@ qpnp_pon_input_dispatch(struct qpnp_pon *pon, u32 pon_type)
 	switch (cfg->pon_type) {
 	case PON_KPDPWR:
 		pon_rt_bit = QPNP_PON_KPDPWR_N_SET;
+		pr_info("Report pwrkey %s event,key_code:%d\n", pon_rt_bit & pon_rt_sts ?
+			"press" : "release",cfg->key_code);		/*mingquan.lai add pwrkey press/release event log 2014013*/
 		break;
 	case PON_RESIN:
 		pon_rt_bit = QPNP_PON_RESIN_N_SET;

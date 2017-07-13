@@ -893,6 +893,26 @@ static int prep_new_page(struct page *page, int order, gfp_t gfp_flags)
 	return 0;
 }
 
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 begin
+//#define __PAGE_ALLOC_HIGH_ORDER_RESERVE__
+
+#ifdef __PAGE_ALLOC_HIGH_ORDER_RESERVE__
+static unsigned int page_alloc_high_order_reserve = 20 * 4;
+module_param_named(high_reserve, page_alloc_high_order_reserve, uint, S_IRUGO | S_IWUSR);
+
+static inline unsigned int zone_high_order_size(struct zone *zone)
+{
+	unsigned int current_order;
+	unsigned int high_order_size = 0;
+
+	/* Find a page of the appropriate size in the preferred list */
+	for (current_order = 2; current_order < MAX_ORDER; ++current_order) {
+		high_order_size += zone->free_area[current_order].nr_free << current_order;
+	}
+
+	return high_order_size;
+}
+#endif // __PAGE_ALLOC_HIGH_ORDER_RESERVE__
 /*
  * Go through the free lists for the given migratetype and remove
  * the smallest available page from the freelists
@@ -904,9 +924,18 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 	unsigned int current_order;
 	struct free_area * area;
 	struct page *page;
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 begin
+	unsigned int end_order = MAX_ORDER;
+#ifdef __PAGE_ALLOC_HIGH_ORDER_RESERVE__
+	if (order == 0 && zone_high_order_size(zone) < page_alloc_high_order_reserve) {
+		end_order = 2;
+	}
+#endif // __PAGE_ALLOC_HIGH_ORDER_RESERVE__
 
 	/* Find a page of the appropriate size in the preferred list */
-	for (current_order = order; current_order < MAX_ORDER; ++current_order) {
+	//for (current_order = order; current_order < MAX_ORDER; ++current_order) {
+	for (current_order = order; current_order < end_order; ++current_order) {
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 end
 		area = &(zone->free_area[current_order]);
 		if (list_empty(&area->free_list[migratetype]))
 			continue;
@@ -1034,10 +1063,19 @@ __rmqueue_fallback(struct zone *zone, int order, int start_migratetype)
 	int current_order;
 	struct page *page;
 	int migratetype, i;
-
+	// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 begin
+	int start_order = MAX_ORDER-1;
+#ifdef __PAGE_ALLOC_HIGH_ORDER_RESERVE__
+	if (order == 0 && zone_high_order_size(zone) < page_alloc_high_order_reserve) {
+		start_order = 1;
+	}
+#endif // __PAGE_ALLOC_HIGH_ORDER_RESERVE__
 	/* Find the largest possible block of pages in the other list */
-	for (current_order = MAX_ORDER-1; current_order >= order;
-						--current_order) {
+	//for (current_order = MAX_ORDER-1; current_order >= order;
+	//					--current_order) {
+	for (current_order = start_order; current_order >= order;
+						--current_order) {						
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 begin
 		for (i = 0;; i++) {
 			migratetype = fallbacks[start_migratetype][i];
 

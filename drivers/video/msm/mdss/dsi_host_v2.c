@@ -27,6 +27,8 @@
 #include "dsi_host_v2.h"
 #include "mdss_debug.h"
 
+#include <linux/proc_fs.h> //add by yusen.ke.sz@tcl.com at 20140414 for display Mipi clk
+
 #define DSI_POLL_SLEEP_US 1000
 #define DSI_POLL_TIMEOUT_US 16000
 #define DSI_ESC_CLK_RATE 19200000
@@ -49,6 +51,7 @@ struct dsi_host_v2_private {
 
 static struct dsi_host_v2_private *dsi_host_private;
 static int msm_dsi_clk_ctrl(struct mdss_panel_data *pdata, int enable);
+uint32_t iMipiClk = 0;//add by yusen.ke.sz@tcl.com at 20140414 for display Mipi clk
 
 int msm_dsi_init(void)
 {
@@ -223,6 +226,9 @@ irqreturn_t msm_dsi_isr_handler(int irq, void *ptr)
 
 	spin_unlock(&ctrl->mdp_lock);
 
+	if (isr & DSI_INTR_BTA_DONE)
+		complete(&ctrl->bta_comp);
+
 	return IRQ_HANDLED;
 }
 
@@ -309,7 +315,7 @@ static int msm_dsi_wait4video_eng_busy(struct mdss_dsi_ctrl_pdata *ctrl)
 	return rc;
 }
 
-void msm_dsi_host_init(struct mipi_panel_info *pinfo)
+void msm_dsi_host_init(struct mdss_dsi_ctrl_pdata *ctrl, struct mipi_panel_info *pinfo) //baoqiang.qin
 {
 	u32 dsi_ctrl, data;
 	unsigned char *ctrl_base = dsi_host_private->dsi_base;
@@ -409,6 +415,8 @@ void msm_dsi_host_init(struct mipi_panel_info *pinfo)
 	data = 0;
 	if (pinfo->rx_eot_ignore)
 		data |= BIT(4);
+	if(ctrl->panel_esd_data.esd_panel_name!=HX8389B_PANEL) //baoqiang.qin
+		pinfo->tx_eot_append = 1;
 	if (pinfo->tx_eot_append)
 		data |= BIT(0);
 	MIPI_OUTP(ctrl_base + DSI_EOT_PACKET_CTRL, data);
@@ -695,7 +703,7 @@ static int msm_dsi_parse_rx_response(struct dsi_buf *rp)
 		break;
 	default:
 		rc = -EINVAL;
-		pr_warn("%s: Unknown cmd received\n", __func__);
+		pr_debug("%s: Unknown cmd received\n", __func__);
 		break;
 	}
 
@@ -709,6 +717,172 @@ static struct dsi_cmd_desc pkt_size_cmd = {
 	{DTYPE_MAX_PKTSIZE, 1, 0, 0, 0, sizeof(max_pktsize)},
 	max_pktsize,
 };
+
+//baoqiang.qin add for esd check
+int msm_dsi_cmds_rx(struct mdss_dsi_ctrl_pdata *ctrl, struct dsi_cmd_desc *cmds, int rlen);
+static char dcs_cmds_panel[2] = {0x0a, 0x00};/* DTYPE_DCS_READ */
+static struct dsi_cmd_desc dcs_read_cmds_panel = {
+	{DTYPE_DCS_READ, 0, 0, 0, 5, sizeof(dcs_cmds_panel)},
+	dcs_cmds_panel
+};
+bool esd_read_cmds_flag=false;
+int msm_dsi_panel_read_registers(struct mdss_dsi_ctrl_pdata *ctrl,char cmd, int rlen, char *rbuf)
+{
+	struct dsi_buf *rp = &ctrl->rx_buf;
+	struct dsi_cmd_desc * cmds;
+	dcs_cmds_panel[0]=cmd;
+	cmds=&dcs_read_cmds_panel;
+	if(ctrl == NULL) {
+		pr_err("%s: Invalid input data.\n",__func__);
+		return -EINVAL;
+	}
+	
+	if(ctrl->panel_esd_data.esd_detection_run==false)
+		return 0;
+	
+	memset(rp->data, 0, 6);
+	if(ctrl->panel_esd_data.esd_detection_run==true){
+		msm_dsi_cmds_rx(ctrl, cmds, rlen);
+		msm_dsi_cmds_rx(ctrl, cmds, rlen);
+	}
+	if(ctrl->panel_esd_data.esd_panel_name==HX8389B_PANEL){
+		if(cmd!=0x09 && cmd!=0xb6)
+			*rbuf=rp->data[2];
+		else	
+			rbuf=rp->data;
+	}else{
+		rbuf=rp->data;
+	}
+	return 0;
+}
+bool msm_dsi_panel_read_cmds_esd_check(struct mdss_dsi_ctrl_pdata *ctrl)
+{	
+	char *temp;
+	static char reg_buf[4]={0};
+	static char reg_buf_v2[4]={0};
+	static int first=0;
+	if(ctrl == NULL) {
+		pr_err("%s: Invalid input data\n",__func__);
+		return -EINVAL;
+	}
+	if(ctrl->panel_esd_data.esd_detection_run==false)
+		return 0;
+	temp=ctrl->rx_buf.data;	
+	if(ctrl->panel_esd_data.esd_panel_name==HX8389B_PANEL && 
+			ctrl->panel_esd_data.esd_detection_run==true){
+		esd_read_cmds_flag=true;	
+		dsi_set_tx_power_mode(0);
+		msm_dsi_panel_read_registers(ctrl, 0x09, 5, temp);	
+		reg_buf_v2[0]=temp[2];	
+		msm_dsi_panel_read_registers(ctrl, 0x0a, 5, temp);
+		reg_buf[0]=*temp;
+		msm_dsi_panel_read_registers(ctrl, 0x0c, 5, temp);
+		reg_buf[1]=*temp;
+		msm_dsi_panel_read_registers(ctrl, 0x0d, 5, temp);
+		reg_buf[2]=*temp;
+		msm_dsi_panel_read_registers(ctrl, 0x0e, 5, temp);
+		reg_buf[3]=*temp;	
+		dsi_set_tx_power_mode(1);	
+		
+		if(ctrl->panel_esd_data.esd_detection_run==false)
+			return true;
+		
+		esd_read_cmds_flag=false;
+		if(reg_buf_v2[0]!=0x80){
+			if(first==0){
+				first=1;
+				return true;
+			}
+			printk("09:   %x, %x, %x, %x\n",reg_buf_v2[0],reg_buf_v2[1],reg_buf_v2[2],reg_buf_v2[3]);
+			return false;
+		}	
+		if(reg_buf[0]!=0x1C || reg_buf[1]!=0x70 || reg_buf[2]!=0x00 ||(reg_buf[3]!=0x80 )){
+			printk("a,c,d,e: 0x%x, 0x%x, 0x%x, 0x%x.\n",reg_buf[0],reg_buf[1],reg_buf[2],reg_buf[3]);
+			return false;	
+		}
+	}else if(ctrl->panel_esd_data.esd_detection_run==true){
+		dsi_set_tx_power_mode(0);
+		msm_dsi_panel_read_registers(ctrl, 0x0a, 1, temp);
+		dsi_set_tx_power_mode(1);
+		if(ctrl->panel_esd_data.esd_detection_run==false)
+			return true;
+		
+		if(first<2){
+			first++;
+			return true;
+		}
+		reg_buf[0]=temp[0];
+		if(reg_buf[0]!=0x9c){			
+			printk("%s:   reg_buf=%x\n",__func__,reg_buf[0]);
+			return false;
+		}
+	}
+	return true;
+}
+#if 1
+static char dcs_cmds_ic[2] = {0xB1, 0x00};/* DTYPE_DCS_READ */
+static struct dsi_cmd_desc dcs_read_cmds_ic = {
+	{DTYPE_DCS_READ, 1, 0, 1, 5, sizeof(dcs_cmds_ic)},
+	dcs_cmds_ic
+};
+static ssize_t msm_dsi_show_readcmds(struct device *dev,
+						struct device_attribute *attr, char *buf)
+{
+	struct platform_device *pdev=NULL;
+	struct mdss_dsi_ctrl_pdata *ctrl=NULL;
+	struct dsi_buf *rp=NULL;
+	pdev=container_of(dev,struct platform_device,dev);
+	if(pdev==NULL){
+		printk("%s: fail to get platform device!\n",__func__);
+		return 0;
+	}
+	ctrl=platform_get_drvdata( pdev);
+	if(ctrl==NULL){
+		printk("%s: fail to get drvdata of platform device!\n",__func__);
+		return 0;
+	}
+	rp=&ctrl->rx_buf;
+	memset(rp->data,0,20);
+	if(esd_read_cmds_flag==false){
+		dsi_set_tx_power_mode(0);
+		msm_dsi_cmds_rx(ctrl, &dcs_read_cmds_ic, 19);
+		msm_dsi_cmds_rx(ctrl, &dcs_read_cmds_ic, 19);
+		dsi_set_tx_power_mode(1);
+	}
+	return snprintf(buf,100, "\n%x, %x, %x, %x, %x, %x, %x, %x, %x, %x, %x,  %x, %x, %x, %x, %x, %x, %x, %x\n",
+						rp->data[0],rp->data[1],rp->data[2],rp->data[3],rp->data[4],rp->data[5],rp->data[6],rp->data[7],
+						rp->data[8],rp->data[9],rp->data[10],rp->data[11],rp->data[12],rp->data[13],	rp->data[14],
+						rp->data[15],rp->data[16],rp->data[17],rp->data[18]);
+}
+static ssize_t msm_dsi_store_readcmds(struct device *dev,
+					struct device_attribute *attr, 
+					const char *buf, size_t size)
+{
+	struct platform_device *pdev=NULL;
+	struct mdss_dsi_ctrl_pdata *ctrl=NULL;
+	pdev=container_of(dev,struct platform_device,dev);
+	if(pdev==NULL){
+		printk("%s: fail to get platform device!\n",__func__);
+		return 0;
+	}
+	ctrl=platform_get_drvdata( pdev);
+	if(ctrl==NULL){
+		printk("%s: fail to get drvdata of platform device!\n",__func__);
+		return 0;
+	}
+	if(strncmp(buf,"0",1) == 0){
+		ctrl->panel_esd_data.esd_detection_run=false;
+		ctrl->panel_esd_enable=false;
+	}
+	else{
+		ctrl->panel_esd_data.esd_detection_run=true;
+		ctrl->panel_esd_enable=true;
+	}
+	return 0;
+}
+static DEVICE_ATTR(readcmds, 0664, msm_dsi_show_readcmds, msm_dsi_store_readcmds);
+#endif
+//baoqiang.qin add end
 
 static int msm_dsi_set_max_packet_size(struct mdss_dsi_ctrl_pdata *ctrl,
 						int size)
@@ -911,6 +1085,7 @@ void msm_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 	}
 
 	msm_dsi_clk_ctrl(&ctrl->panel_data, 1);
+	dsi_set_tx_power_mode(0);
 
 	if (0 == (req->flags & CMD_REQ_LP_MODE))
 		dsi_set_tx_power_mode(0);
@@ -928,6 +1103,40 @@ void msm_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 	mutex_unlock(&ctrl->cmd_mutex);
 }
 
+//add by yusen.ke.sz@tcl.com at 20140414 for display Mipi Clk begin
+static int ts_switch_read(char *page, char **start, off_t off,
+			       int count, int *eof, void *data)
+{
+  int len = 0;
+
+  len += sprintf(page + len, "%d\n", iMipiClk);
+   	if (len <= off+count)
+		*eof = 1;
+
+	*start = page + off;
+	len -= off;
+	if (len > count)
+		len = count;
+	if (len < 0)
+		len = 0;
+
+	return len;
+   
+}
+
+static void init_adb_proc(void)
+{
+	struct proc_dir_entry *ts_switch_file;
+	
+	ts_switch_file = create_proc_read_entry("MIPI_CLK", 0, NULL, ts_switch_read,NULL);
+	if (ts_switch_file) {
+		printk(KERN_ERR "MIPI_CLK: init_log_proc create_proc_entry success\n");
+	} 
+	else
+		printk(KERN_ERR "MIPI_CLK: init_log_proc create_proc_entry fails\n");
+}
+//add by yusen.ke.sz@tcl.com at 20140414 for display Mipi Clk end
+
 static int msm_dsi_cal_clk_rate(struct mdss_panel_data *pdata,
 				u32 *bitclk_rate,
 				u32 *dsiclk_rate,
@@ -938,7 +1147,8 @@ static int msm_dsi_cal_clk_rate(struct mdss_panel_data *pdata,
 	struct mipi_panel_info *mipi;
 	u32 hbp, hfp, vbp, vfp, hspw, vspw, width, height;
 	int lanes;
-
+	static int firsttime = 0;//add by yusen.ke.sz@tcl.com at 20140415 for  mipiclk dsiplay
+	
 	pinfo = &pdata->panel_info;
 	mipi  = &pdata->panel_info.mipi;
 
@@ -971,8 +1181,15 @@ static int msm_dsi_cal_clk_rate(struct mdss_panel_data *pdata,
 	*byteclk_rate = *bitclk_rate / 8;
 	*dsiclk_rate = *byteclk_rate * lanes;
 	*pclk_rate = *byteclk_rate * lanes * 8 / pdata->panel_info.bpp;
-
-	pr_debug("dsiclk_rate=%u, byteclk=%u, pck_=%u\n",
+	//add by yusen.ke.sz@tcl.com at 20140414 for display Mipi Clk begin
+	if(firsttime ==0)
+	{
+		firsttime =1 ;		
+		iMipiClk = *dsiclk_rate*2;
+		init_adb_proc();
+	}	
+	//add by yusen.ke.sz@tcl.com at 20140414 for display Mipi Clk end
+	pr_err("dsiclk_rate=%u, byteclk=%u, pck_=%u\n",//pr_debug //modify by keys 20140320
 		*dsiclk_rate, *byteclk_rate, *pclk_rate);
 	return 0;
 }
@@ -1078,7 +1295,7 @@ static int msm_dsi_on(struct mdss_panel_data *pdata)
 	}
 
 	msm_dsi_sw_reset();
-	msm_dsi_host_init(mipi);
+	msm_dsi_host_init(ctrl_pdata,mipi); //baoqiang.qin
 
 	if (mipi->force_clk_lane_hs) {
 		u32 tmp;
@@ -1174,6 +1391,35 @@ static int msm_dsi_cont_on(struct mdss_panel_data *pdata)
 	dsi_host_private->dsi_on = 1;
 	mutex_unlock(&ctrl_pdata->mutex);
 	return 0;
+}
+
+static int msm_dsi_bta_status_check(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+{
+	int ret = 0;
+
+	if (ctrl_pdata == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return 0;
+	}
+
+	mutex_lock(&ctrl_pdata->cmd_mutex);
+	msm_dsi_set_irq(ctrl_pdata, DSI_INTR_BTA_DONE_MASK);
+	INIT_COMPLETION(ctrl_pdata->bta_comp);
+
+	/* BTA trigger */
+	MIPI_OUTP(dsi_host_private->dsi_base + DSI_CMD_MODE_BTA_SW_TRIGGER,
+																0x01);
+	wmb();
+	ret = wait_for_completion_killable_timeout(&ctrl_pdata->bta_comp,
+																HZ/10);
+	msm_dsi_clear_irq(ctrl_pdata, DSI_INTR_BTA_DONE_MASK);
+	mutex_unlock(&ctrl_pdata->cmd_mutex);
+
+	if (ret <= 0)
+		pr_err("%s: DSI BTA error: %i\n", __func__, __LINE__);
+
+	pr_debug("%s: BTA done with ret: %d\n", __func__, ret);
+	return ret;
 }
 
 static void msm_dsi_debug_enable_clock(int on)
@@ -1339,6 +1585,7 @@ void msm_dsi_ctrl_init(struct mdss_dsi_ctrl_pdata *ctrl)
 {
 	init_completion(&ctrl->dma_comp);
 	init_completion(&ctrl->mdp_comp);
+	init_completion(&ctrl->bta_comp);
 	init_completion(&ctrl->video_comp);
 	spin_lock_init(&ctrl->irq_lock);
 	spin_lock_init(&ctrl->mdp_lock);
@@ -1349,6 +1596,7 @@ void msm_dsi_ctrl_init(struct mdss_dsi_ctrl_pdata *ctrl)
 	dsi_buf_alloc(&ctrl->rx_buf, SZ_4K);
 	ctrl->cmdlist_commit = msm_dsi_cmdlist_commit;
 	ctrl->panel_mode = ctrl->panel_data.panel_info.mipi.mode;
+	ctrl->check_status = msm_dsi_bta_status_check;
 }
 
 static int __devinit msm_dsi_probe(struct platform_device *pdev)
@@ -1476,6 +1724,13 @@ static int __devinit msm_dsi_probe(struct platform_device *pdev)
 	intf.private = NULL;
 	dsi_register_interface(&intf);
 
+	#if 1  //baoqiang add for esd check
+	rc = device_create_file(&pdev->dev,&dev_attr_readcmds);
+	if(rc==0)
+		printk("%s: success to create device file!\n",__func__);
+	else
+		printk("%s: fail to create device file!\n",__func__);
+	#endif //baoqiang add end
 	msm_dsi_debug_init();
 
 	msm_dsi_ctrl_init(ctrl_pdata);

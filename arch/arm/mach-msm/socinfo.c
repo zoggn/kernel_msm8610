@@ -459,6 +459,21 @@ uint32_t socinfo_get_raw_id(void)
 		(socinfo->v1.format >= 2 ? socinfo->v2.raw_id : 0)
 		: 0;
 }
+//add by zcl for board id
+uint32_t socinfo_get_hw_version(void)
+{
+	static uint32_t board_id= 0xFFFFFFFF;
+	if (board_id ==0xFFFFFFFF)
+	{
+		uint32_t* board_id_smem;
+		board_id_smem = smem_alloc(SMEM_VERSION_BOARD_ID, sizeof(uint32_t));
+		if(board_id_smem!=NULL)
+			board_id =*board_id_smem;   
+	}
+	pr_info("kernel::::%s,line:%d,board_id:%d",__func__,__LINE__,board_id);
+	
+	return  board_id;
+}
 
 uint32_t socinfo_get_raw_version(void)
 {
@@ -765,6 +780,17 @@ msm_get_raw_version(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%u\n",
 		socinfo_get_raw_version());
 }
+//add by zcl for board id
+static ssize_t
+msm_get_hw_version(struct device *dev,
+		     struct device_attribute *attr,
+		     char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n",
+		socinfo_get_hw_version());
+}
+
+//end add by zcl for board id
 
 static ssize_t
 msm_get_build_id(struct device *dev,
@@ -1031,7 +1057,11 @@ msm_select_image(struct device *dev, struct device_attribute *attr,
 
 static struct device_attribute msm_soc_attr_raw_version =
 	__ATTR(raw_version, S_IRUGO, msm_get_raw_version,  NULL);
+//add by zcl for board id
+static struct device_attribute msm_soc_attr_hw_version =
+	__ATTR(board_id, S_IRWXUGO, msm_get_hw_version,  NULL); 
 
+//end add by zcl for board id
 static struct device_attribute msm_soc_attr_raw_id =
 	__ATTR(raw_id, S_IRUGO, msm_get_raw_id,  NULL);
 
@@ -1139,6 +1169,9 @@ static void __init populate_soc_sysfs_files(struct device *msm_soc_device)
 	device_create_file(msm_soc_device, &image_variant);
 	device_create_file(msm_soc_device, &image_crm_version);
 	device_create_file(msm_soc_device, &select_image);
+	//add by zcl for board id
+	device_create_file(msm_soc_device,&msm_soc_attr_hw_version);
+    //end add by zcl for board id
 
 	switch (legacy_format) {
 	case 8:

@@ -35,6 +35,8 @@
 #include <linux/kernel.h>
 #include <linux/gpio.h>
 #include <linux/input.h>
+#include <linux/time.h>  //ting.kang add for adb force open by long press button
+#include <linux/proc_fs.h> //ting.kang add for adb force open by long press button
 #include "wcd9320.h"
 #include "wcd9306.h"
 #include "wcd9xxx-mbhc.h"
@@ -123,12 +125,19 @@
 #define WCD9XXX_MB_MEAS_DELTA_MAX_MV 80
 #define WCD9XXX_CS_MEAS_DELTA_MAX_MV 10
 
+
+extern void tct_usb_mode_switch(void);   //ting.kang add for adb force open by long press button
 static int impedance_detect_en;
 module_param(impedance_detect_en, int,
 			S_IRUGO | S_IWUSR | S_IWGRP);
 MODULE_PARM_DESC(impedance_detect_en, "enable/disable impedance detect");
 
 static bool detect_use_vddio_switch;
+//ting.kang add for adb force open by long press button start
+static time_t presstime;  
+static time_t releasetime;  
+int adb_state = 0; 
+//ting.kang add for adb force open by long press button end
 
 struct wcd9xxx_mbhc_detect {
 	u16 dce;
@@ -1464,6 +1473,13 @@ wcd9xxx_cs_find_plug_type(struct wcd9xxx_mbhc *mbhc,
 			type = PLUG_TYPE_INVALID;
 		}
 	}
+
+      // add by changshun.zhou modify for playing music noise by headset 20140110 begin
+	if (type == PLUG_TYPE_HEADSET &&
+		(mbhc->mbhc_cfg->micbias_enable_flags &
+		(1 << MBHC_MICBIAS_ENABLE_REGULAR_HEADSET)))
+		mbhc->micbias_enable = true;
+	// add by changshun.zhou modify for playing music noise by headset 20140110 end
 exit:
 	pr_debug("%s: Plug type %d detected\n", __func__, type);
 	return type;
@@ -2494,7 +2510,7 @@ static void wcd9xxx_btn_lpress_fn(struct work_struct *work)
 	short bias_value;
 	int dce_mv, sta_mv;
 	struct wcd9xxx_mbhc *mbhc;
-
+	struct timespec ts;   //ting.kang add for adb force open by long press button
 	pr_debug("%s:\n", __func__);
 
 	dwork = to_delayed_work(work);
@@ -2508,6 +2524,11 @@ static void wcd9xxx_btn_lpress_fn(struct work_struct *work)
 	pr_debug("%s: STA: %d, DCE: %d\n", __func__, sta_mv, dce_mv);
 
 	pr_debug("%s: Reporting long button press event\n", __func__);
+	///ting.kang add for adb force open by long press button start
+	ts = current_kernel_time();  
+	pr_debug("%s: press time %ld\n", __func__,ts.tv_sec);  
+	presstime = ts.tv_sec;  
+	//ting.kang add for adb force open by long press button end
 	wcd9xxx_jack_report(mbhc, &mbhc->button_jack, mbhc->buttons_pressed,
 			    mbhc->buttons_pressed);
 
@@ -3381,6 +3402,8 @@ static irqreturn_t wcd9xxx_release_handler(int irq, void *data)
 	int ret;
 	bool waitdebounce = true;
 	struct wcd9xxx_mbhc *mbhc = data;
+	struct timespec ts;   //ting.kang add for adb force open by long press button
+	int timecount = 0;  //ting.kang add for adb force open by long press button
 
 	pr_debug("%s: enter\n", __func__);
 	WCD9XXX_BCL_LOCK(mbhc->resmgr);
@@ -3391,6 +3414,19 @@ static irqreturn_t wcd9xxx_release_handler(int irq, void *data)
 		if (ret == 0) {
 			pr_debug("%s: Reporting long button release event\n",
 				 __func__);
+			//ting.kang add for adb force open by long press button start
+			ts = current_kernel_time();  
+			pr_debug("%s: release time %ld\n", __func__,ts.tv_sec);  
+			releasetime = ts.tv_sec;  
+			timecount = releasetime - presstime;
+			if (timecount >= 10)  {
+				pr_debug("%s: butten over 10s\n", __func__);
+				adb_state = 1;
+				tct_usb_mode_switch();  
+			}
+			presstime=0;
+			releasetime=0;
+			//ting.kang add for adb force open by long press button end
 			wcd9xxx_jack_report(mbhc, &mbhc->button_jack, 0,
 					    mbhc->buttons_pressed);
 		} else {
@@ -4260,6 +4296,18 @@ static int wcd9xxx_event_notify(struct notifier_block *self, unsigned long val,
 			if (!mbhc->polling_active)
 				wcd9xxx_enable_mbhc_txfe(mbhc, false);
 		}
+
+		// add by changshun.zhou modify for playing music noise by headset 20140110 begin
+		if (mbhc->micbias_enable && mbhc->polling_active &&
+			!(snd_soc_read(mbhc->codec, mbhc->mbhc_bias_regs.ctl_reg)
+			& 0x80)) {
+			pr_debug("%s:Micbias turned off by recording, set up again",
+				__func__);
+			snd_soc_update_bits(codec, mbhc->mbhc_bias_regs.ctl_reg,
+				0x80, 0x80);
+		}
+		// add by changshun.zhou modify for playing music noise by headset 20140110 end
+		
 		break;
 	/* PA usage change */
 	case WCD9XXX_EVENT_PRE_HPHL_PA_ON:
@@ -4528,6 +4576,39 @@ int wcd9xxx_mbhc_get_impedance(struct wcd9xxx_mbhc *mbhc, uint32_t *zl,
 		return -EINVAL;
 }
 
+//ting.kang add for adb force open by long press button start
+static int ts_switch_read(char *page, char **start, off_t off,
+			       int count, int *eof, void *data)
+{
+  int len = 0;
+
+  len += sprintf(page + len, "%d\n", adb_state);
+   	if (len <= off+count)
+		*eof = 1;
+
+	*start = page + off;
+	len -= off;
+	if (len > count)
+		len = count;
+	if (len < 0)
+		len = 0;
+
+	return len;
+   
+}
+
+static void init_adb_proc(void)
+{
+	struct proc_dir_entry *ts_switch_file;
+	
+	ts_switch_file = create_proc_read_entry("adb_force_open", 0, NULL, ts_switch_read,NULL);
+	if (ts_switch_file) {
+		printk(KERN_ERR "xlog: init_log_proc create_proc_entry success\n");
+	} 
+	else
+		printk(KERN_ERR "xlog: init_log_proc create_proc_entry fails\n");
+}
+//ting.kang add for adb force open by long press button end
 /*
  * wcd9xxx_mbhc_init : initialize MBHC internal structures.
  *
@@ -4614,6 +4695,8 @@ int wcd9xxx_mbhc_init(struct wcd9xxx_mbhc *mbhc, struct wcd9xxx_resmgr *resmgr,
 	}
 
 	wcd9xxx_init_debugfs(mbhc);
+
+	init_adb_proc(); //ting.kang add for adb force open by long press button 
 
 
 	/* Disable Impedance detection by default for certain codec types */

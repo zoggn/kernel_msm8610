@@ -88,7 +88,7 @@ module_param(lpm_disconnect_thresh , uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(lpm_disconnect_thresh,
 	"Delay before entering LPM on USB disconnect");
 
-static bool floated_charger_enable;
+static bool floated_charger_enable=true; //change by shicuiping
 module_param(floated_charger_enable , bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(floated_charger_enable,
 	"Whether to enable floated charger");
@@ -1120,7 +1120,10 @@ static int msm_otg_suspend(struct msm_otg *motg)
 		motg->ui_enabled = 1;
 		enable_irq(motg->irq);
 	}
-	wake_unlock(&motg->wlock);
+
+// [PLATFORM]-Change by TCTSZ.cuiping.shi, for wait other work, 2014/03/14
+	//wake_unlock(&motg->wlock);
+	wake_lock_timeout(&motg->wlock,HZ);
 
 	dev_info(phy->dev, "USB in low power mode\n");
 
@@ -2394,9 +2397,10 @@ static void msm_chg_detect_work(struct work_struct *w)
 				motg->chg_type = USB_PROPRIETARY_CHARGER;
 			else if (!dcd && floated_charger_enable)
 				motg->chg_type = USB_FLOATED_CHARGER;
-			else
+			else{
 				motg->chg_type = USB_SDP_CHARGER;
-
+				msm_otg_notify_charger(motg, IDEV_CHG_MIN);  // add by shicuiping
+			}
 			motg->chg_state = USB_CHG_STATE_DETECTED;
 			delay = 0;
 		}
@@ -2611,7 +2615,7 @@ static void msm_otg_sm_work(struct work_struct *w)
 					break;
 				case USB_FLOATED_CHARGER:
 					msm_otg_notify_charger(motg,
-							IDEV_CHG_MAX);
+							IDEV_CHG_MIN); //change by shicuiping
 					pm_runtime_put_noidle(otg->phy->dev);
 					pm_runtime_suspend(otg->phy->dev);
 					break;

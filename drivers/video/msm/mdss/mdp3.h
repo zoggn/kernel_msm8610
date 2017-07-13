@@ -27,6 +27,8 @@
 
 #define MDP_VSYNC_CLK_RATE	19200000
 
+#define MDP_PPP_MAX_TIMEOUT msecs_to_jiffies(200)
+
 enum  {
 	MDP3_CLK_AHB,
 	MDP3_CLK_CORE,
@@ -135,6 +137,7 @@ struct mdp3_hw_resource {
 	struct ion_handle *ion_handle;
 	struct mutex iommu_lock;
 	struct rb_root iommu_root;
+	struct completion ppp_comp;
 	void *virt;
 	unsigned long phys;
 	size_t size;
@@ -195,6 +198,10 @@ int mdp3_parse_dt_splash(struct msm_fb_data_type *mfd);
 void mdp3_release_splash_memory(void);
 int mdp3_create_sysfs_link(struct device *dev);
 int mdp3_get_cont_spash_en(void);
+
+int mdp3_acquire_ppp(void);
+void mdp3_release_ppp(void);
+void mdp3_reset_ppp(void);
 
 #define MDP3_REG_WRITE(addr, val) writel_relaxed(val, mdp3_res->mdp_base + addr)
 #define MDP3_REG_READ(addr) readl_relaxed(mdp3_res->mdp_base + addr)

@@ -469,6 +469,8 @@ struct input_keymap_entry {
 #define KEY_RFKILL		247	/* Key that controls all radios */
 
 #define KEY_MICMUTE		248	/* Mute / unmute the microphone */
+#define KEY_UNLOCK_COVER        250     /* 250, for flip cover type, unlock  */
+#define KEY_LOCK_COVER      251     /* 251, for flip cover type, lock  */
 
 /* Code 255 is reserved for special needs of AT keyboard driver */
 

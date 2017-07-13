@@ -74,7 +74,8 @@
 #include <asm/setup.h>
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
-
+// add by xiaoyong.wu
+#include <linux/bootprof.h>
 #ifdef CONFIG_X86_LOCAL_APIC
 #include <asm/smp.h>
 #endif
@@ -103,6 +104,10 @@ extern void tc_init(void);
  * flag is set.
  */
 bool early_boot_irqs_disabled __read_mostly;
+
+//add lzl
+bool bl_skip = false;
+//end
 
 enum system_states system_state __read_mostly;
 EXPORT_SYMBOL(system_state);
@@ -506,6 +511,9 @@ asmlinkage void __init start_kernel(void)
 	page_alloc_init();
 
 	printk(KERN_NOTICE "Kernel command line: %s\n", boot_command_line);
+
+    if(strstr(boot_command_line,"charger") != NULL)
+        bl_skip = true;
 	parse_early_param();
 	parse_args("Booting kernel", static_command_line, __start___param,
 		   __stop___param - __start___param,
@@ -808,6 +816,7 @@ static noinline int init_post(void)
 	system_state = SYSTEM_RUNNING;
 	numa_default_policy();
 
+    log_boot("Kernel_init_done"); // add by xiaoyong.wu
 
 	current->signal->flags |= SIGNAL_UNKILLABLE;
 
@@ -892,3 +901,18 @@ static int __init kernel_init(void * unused)
 	init_post();
 	return 0;
 }
+
+// add by xcb for power off alarm bug 585101 begin 
+bool alarm_boot_mode = false;
+static int __init alarm_boot_check(char *p)
+{
+	if(!strcmp(p, "alarm"))
+		alarm_boot_mode = true;
+	else
+		alarm_boot_mode = false;
+
+	printk("%s alarm_boot_mode = %d\n", __func__, alarm_boot_mode);
+	return 0;
+}
+// add by xcb end
+early_param("androidboot.mode", alarm_boot_check);

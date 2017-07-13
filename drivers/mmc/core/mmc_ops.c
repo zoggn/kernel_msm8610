@@ -74,7 +74,10 @@ int mmc_card_sleepawake(struct mmc_host *host, int sleep)
 		cmd.arg |= 1 << 15;
 
 	cmd.flags = MMC_RSP_R1B | MMC_CMD_AC;
-	err = mmc_wait_for_cmd(host, &cmd, 0);
+	//add by chenghui.jia for emmc suspend
+       mmc_delay(DIV_ROUND_UP(card->ext_csd.sa_timeout, 10000));
+	//end add by chenghui.jia
+	err = mmc_wait_for_cmd(host, &cmd, 3);//modify retrie times from 0 to 3 by chenghui.jia for emmc suspend
 	if (err)
 		return err;
 

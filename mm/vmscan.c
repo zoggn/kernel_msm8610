@@ -1640,6 +1640,14 @@ static int vmscan_swappiness(struct scan_control *sc)
 	return mem_cgroup_swappiness(sc->target_mem_cgroup);
 }
 
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 begin
+#ifdef CONFIG_ZRAM
+static int vmscan_swap_sum = 200;
+static int vmscan_swap_file_ratio = 1;
+module_param_named(swap_sum, vmscan_swap_sum, int, S_IRUGO | S_IWUSR);
+module_param_named(swap_file_ratio, vmscan_swap_file_ratio, int, S_IRUGO | S_IWUSR);
+#endif // CONFIG_ZRAM
+// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 end
 /*
  * Determine how aggressively the anon and file LRU lists should be
  * scanned.  The relative value of each set of LRU lists is determined
@@ -1705,8 +1713,20 @@ static void get_scan_count(struct mem_cgroup_zone *mz, struct scan_control *sc,
 	 * With swappiness at 100, anonymous and file have the same priority.
 	 * This scanning priority is essentially the inverse of IO cost.
 	 */
+	 // merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 begin
+#ifdef CONFIG_ZRAM
+	if (vmscan_swap_file_ratio) {
+	    anon_prio = (vmscan_swappiness(sc) * anon) / (anon + file + 1);
+	    file_prio = (vmscan_swap_sum - vmscan_swappiness(sc)) * file / (anon + file + 1);
+	} else {
+	    anon_prio = vmscan_swappiness(sc);
+	    file_prio = vmscan_swap_sum - vmscan_swappiness(sc);
+	}
+#else // CONFIG_ZRAM
 	anon_prio = vmscan_swappiness(sc);
 	file_prio = 200 - vmscan_swappiness(sc);
+#endif // CONFIG_ZRAM
+	// merge from MTK platform  for swap optimize zhengwei.zheng 2014-03-05 end
 
 	/*
 	 * OK, so we have swap space and a fair amount of page cache

@@ -349,6 +349,9 @@ static void msmsdcc_soft_reset(struct msmsdcc_host *host)
 			mb();
 		}
 	} else {
+		//modified by wenzhao.guo@tcl.com for adding MMC_CMD_LOG starts	
+		mmc_cmd_log(host->mmc, 0, 0);
+		//modified by wenzhao.guo@tcl.com for adding MMC_CMD_LOG ends
 		writel_relaxed(0, host->base + MMCICOMMAND);
 		msmsdcc_sync_reg_wr(host);
 		writel_relaxed(0, host->base + MMCIDATACTRL);
@@ -583,6 +586,9 @@ static inline void msmsdcc_delay(struct msmsdcc_host *host)
 static inline void
 msmsdcc_start_command_exec(struct msmsdcc_host *host, u32 arg, u32 c)
 {
+	//modified by wenzhao.guo for adding MMC_CMD_LOG starts
+	mmc_cmd_log(host->mmc, c, arg);
+	//modified by wenzhao.guo for adding MMC_CMD_LOG ends
 	writel_relaxed(arg, host->base + MMCIARGUMENT);
 	writel_relaxed(c, host->base + MMCICOMMAND);
 	/*
@@ -1786,6 +1792,9 @@ static void msmsdcc_do_cmdirq(struct msmsdcc_host *host, uint32_t status)
 	host->curr.cmd = NULL;
 	if (mmc_resp_type(cmd))
 		cmd->resp[0] = readl_relaxed(host->base + MMCIRESPONSE0);
+	//modified by wenzhao.guo for adding MMC_CMD_LOG starts	
+	mmc_cmd_log_resp(host->mmc, cmd->resp[0]);
+	//modified by wenzhao.guo for adding MMC_CMD_LOG ends
 	/*
 	 * Read rest of the response registers only if
 	 * long response is expected for this command
@@ -6697,9 +6706,13 @@ static void msmsdcc_print_pm_stats(struct msmsdcc_host *host, ktime_t start,
 				   const char *func, int err) {}
 #endif
 
+
+#define SD_DISABLE_RUNTIME 1  //add by jch for disable SD runtime function
+
 static int
 msmsdcc_runtime_suspend(struct device *dev)
 {
+#ifndef  SD_DISABLE_RUNTIME//add by jch for disable SD runtime function
 	struct mmc_host *mmc = dev_get_drvdata(dev);
 	struct msmsdcc_host *host = mmc_priv(mmc);
 	int rc = 0;
@@ -6768,11 +6781,18 @@ out:
 		msmsdcc_msm_bus_cancel_work_and_set_vote(host, NULL);
 	msmsdcc_print_pm_stats(host, start, __func__, rc);
 	return rc;
+	
+//add by jch for disable SD runtime function	
+#else
+	return 0;
+#endif
+//end add by jch for disable SD runtime function
 }
 
 static int
 msmsdcc_runtime_resume(struct device *dev)
 {
+#ifndef  SD_DISABLE_RUNTIME//add by jch for disable SD runtime function	
 	struct mmc_host *mmc = dev_get_drvdata(dev);
 	struct msmsdcc_host *host = mmc_priv(mmc);
 	unsigned long flags;
@@ -6817,10 +6837,16 @@ msmsdcc_runtime_resume(struct device *dev)
 out:
 	msmsdcc_print_pm_stats(host, start, __func__, 0);
 	return 0;
+//add by jch for disable SD runtime function		
+#else
+	return 0;
+#endif
+//end add by jch for disable SD runtime function	
 }
 
 static int msmsdcc_runtime_idle(struct device *dev)
 {
+#ifndef  SD_DISABLE_RUNTIME//add by jch for disable SD runtime function
 	struct mmc_host *mmc = dev_get_drvdata(dev);
 	struct msmsdcc_host *host = mmc_priv(mmc);
 
@@ -6831,6 +6857,11 @@ static int msmsdcc_runtime_idle(struct device *dev)
 	pm_schedule_suspend(dev, host->idle_tout);
 
 	return -EAGAIN;
+//add by jch for disable SD runtime function
+#else
+	return 0;
+#endif
+//end add by jch for disable SD runtime function
 }
 
 static int msmsdcc_pm_suspend(struct device *dev)

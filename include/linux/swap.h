@@ -344,18 +344,18 @@ extern struct page *swapin_readahead(swp_entry_t, gfp_t,
 			struct vm_area_struct *vma, unsigned long addr);
 
 /* linux/mm/swapfile.c */
-extern atomic_long_t nr_swap_pages;
+extern long nr_swap_pages;//modify by jch for swap to zram
 extern long total_swap_pages;
 
 /* Swap 50% full? Release swapcache more aggressively.. */
 static inline bool vm_swap_full(void)
 {
-	return atomic_long_read(&nr_swap_pages) * 2 < total_swap_pages;
+	return nr_swap_pages * 2 < total_swap_pages;
 }
 
 static inline long get_nr_swap_pages(void)
 {
-	return atomic_long_read(&nr_swap_pages);
+	return nr_swap_pages;
 }
 
 extern void si_swapinfo(struct sysinfo *);

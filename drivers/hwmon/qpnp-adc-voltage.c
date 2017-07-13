@@ -129,6 +129,7 @@ static struct qpnp_vadc_scale_fn vadc_scale_fn[] = {
 	[SCALE_THERM_150K_PULLUP] = {qpnp_adc_scale_therm_pu1},
 	[SCALE_QRD_BATT_THERM] = {qpnp_adc_scale_qrd_batt_therm},
 	[SCALE_QRD_SKUAA_BATT_THERM] = {qpnp_adc_scale_qrd_skuaa_batt_therm},
+	[SCALE_BATT_THERM_VOLTAGE] = {qpnp_adc_scale_batt_therm_voltage}, //add by shicuiping for therm adc voltage
 };
 
 static int32_t qpnp_vadc_read_reg(struct qpnp_vadc_chip *vadc, int16_t reg,
@@ -995,10 +996,22 @@ int32_t qpnp_vadc_conv_seq_request(struct qpnp_vadc_chip *vadc,
 	}
 
 	vadc->adc->amux_prop->amux_channel = channel;
-
+	//add by shicuiping for therm adc voltage start
+	if(channel==LR_MUX1_BATT_THERM_VOLTAGE)
+		vadc->adc->amux_prop->amux_channel = LR_MUX1_BATT_THERM;
+	//add by shicuiping for therm adc voltage stop
 	while ((vadc->adc->adc_channels[dt_index].channel_num
 		!= channel) && (dt_index < vadc->max_channels_available))
 		dt_index++;
+	//add by shicuiping for therm adc voltage start
+	if(channel==LR_MUX1_BATT_THERM_VOLTAGE)
+	{
+		dt_index =0;
+		while ((vadc->adc->adc_channels[dt_index].channel_num
+		!= LR_MUX1_BATT_THERM) && (dt_index < vadc->max_channels_available))
+		dt_index++;
+	}
+	//add by shicuiping for therm adc voltage stop
 
 	if (dt_index >= vadc->max_channels_available) {
 		pr_err("not a valid VADC channel\n");
@@ -1100,6 +1113,10 @@ int32_t qpnp_vadc_conv_seq_request(struct qpnp_vadc_chip *vadc,
 		 qpnp_vadc_amux_scaling_ratio[amux_prescaling].den;
 
 	scale_type = vadc->adc->adc_channels[dt_index].adc_scale_fn;
+	//add by shicuiping for therm adc voltage start
+	if(channel==LR_MUX1_BATT_THERM_VOLTAGE)
+		scale_type = SCALE_BATT_THERM_VOLTAGE;
+	//add by shicuiping for therm adc voltage stop
 	if (scale_type >= SCALE_NONE) {
 		rc = -EBADF;
 		goto fail_unlock;

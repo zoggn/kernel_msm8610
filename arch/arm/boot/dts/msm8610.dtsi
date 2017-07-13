@@ -20,7 +20,7 @@
 	memory {
 		qsecom_mem: qsecom_region {
 			linux,contiguous-region;
-			reg = <0 0x100000>;
+			reg = <0 0x500000>;
 			label = "qsecom_mem";
 		};
 	};
@@ -305,7 +305,6 @@
 		qcom,bus-width = <8>;
 		qcom,nonremovable;
 		qcom,bus-speed-mode = "HS200_1p8v", "DDR_1p8v";
-		qcom,cpu-dma-latency-us = <701>;
 
 		status = "disabled";
 	};
@@ -339,7 +338,6 @@
 		qcom,xpc;
 		qcom,bus-speed-mode = "SDR12", "SDR25", "SDR50", "DDR50", "SDR104";
 		qcom,current-limit = <800>;
-		qcom,cpu-dma-latency-us = <701>;
 
 		status = "disabled";
 	};
@@ -353,7 +351,6 @@
 		interrupt-names = "hc_irq", "pwr_irq";
 
 		qcom,bus-width = <8>;
-		qcom,cpu-dma-latency-us = <701>;
 		status = "disabled";
 	};
 
@@ -366,7 +363,6 @@
 		interrupt-names = "hc_irq", "pwr_irq";
 
 		qcom,bus-width = <4>;
-		qcom,cpu-dma-latency-us = <701>;
 		status = "disabled";
 	};
 
@@ -465,13 +461,16 @@
 		qcom,bark-time = <11000>;
 		qcom,pet-time = <10000>;
 		qcom,ipi-ping;
+/*add by jch for watchdog ramdump*/
+		qcom,memory-reservation-type = "EBI1";
+		qcom,memory-reservation-size = <0xb0000>;
+/*end add by jch*/
 	};
 
 	qcom,acpuclk@f9011050 {
 		compatible = "qcom,acpuclk-a7";
-		reg = <0xf9011050 0x8>,
-		      <0xfc4b80b8 0x8>;
-		reg-names = "rcg_base", "pte_efuse";
+		reg = <0xf9011050 0x8>;
+		reg-names = "rcg_base";
 		a7_cpu-supply = <&apc_vreg_corner>;
 	};
 
@@ -518,7 +517,23 @@
                 qcom,i2c-src-freq = <19200000>;
                 qcom,master-id = <86>;
         };
-
+//Begin-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
+        i2c_led_flash: i2c@f9924000 {
+                cell-index = <2>;
+                compatible = "qcom,i2c-qup";
+                #address-cells = <1>;
+                #size-cells = <0>;
+                reg-names = "qup_phys_addr";
+                reg = <0xf9924000 0x1000>;
+                interrupt-names = "qup_err_intr";
+                interrupts = <0 96 0>;
+                qcom,i2c-bus-freq = <100000>;
+                qcom,i2c-src-freq = <19200000>;
+                qcom,sda-gpio = <&msmgpio 9 0>;
+                qcom,scl-gpio = <&msmgpio 8 0>;
+                qcom,master-id = <86>;
+        };
+//End-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
 	i2c: i2c@f9928000 { /* BLSP1 QUP6 */
 		cell-index = <6>;
 		compatible = "qcom,i2c-qup";
@@ -528,29 +543,32 @@
 		reg = <0xf9928000 0x1000>;
 		interrupt-names = "qup_err_intr";
 		interrupts = <0 100 0>;
+		/*modify by weicai.long@tcl.com for cts testCameraToSurfaceTextureMetadata, 2014/3/25.*/
 		qcom,i2c-bus-freq = <100000>;
+		/*end modify by weicai.long@tcl.com.*/
 		qcom,i2c-src-freq = <19200000>;
 		qcom,sda-gpio = <&msmgpio 16 0>;
 		qcom,scl-gpio = <&msmgpio 17 0>;
                 qcom,master-id = <86>;
 	};
 
-
-	i2c@f9924000 { /* BLSP-1 QUP-3 */
-		cell-index = <2>;
-		compatible = "qcom,i2c-qup";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg-names = "qup_phys_addr";
-		reg = <0xf9924000 0x1000>;
-		interrupt-names = "qup_err_intr";
-		interrupts = <0 96 0>;
-		qcom,i2c-bus-freq = <100000>;
-		qcom,i2c-src-freq = <19200000>;
-		qcom,sda-gpio = <&msmgpio 8 0>;
-		qcom,scl-gpio = <&msmgpio 9 0>;
-		qcom,master-id = <86>;
-	};
+/*modify by weicai.long@tcl.com for led flash i2c bus, 2014/4/4.*/
+//	i2c@f9924000 { /* BLSP-1 QUP-3 */
+//		cell-index = <2>;
+//		compatible = "qcom,i2c-qup";
+//		#address-cells = <1>;
+//		#size-cells = <0>;
+//		reg-names = "qup_phys_addr";
+//		reg = <0xf9924000 0x1000>;
+//		interrupt-names = "qup_err_intr";
+//		interrupts = <0 96 0>;
+//		qcom,i2c-bus-freq = <100000>;
+//		qcom,i2c-src-freq = <19200000>;
+//		qcom,sda-gpio = <&msmgpio 8 0>;
+//		qcom,scl-gpio = <&msmgpio 9 0>;
+//		qcom,master-id = <86>;
+//	};
+/*end modify by weicai.long@tcl.com.*/
 
 	i2c@f9925000 { /* BLSP-1 QUP-3 */
 		cell-index = <0>;
@@ -829,20 +847,17 @@
 		compatible = "qcom,msm-thermal";
 		qcom,sensor-id = <5>;
 		qcom,poll-ms = <250>;
-		qcom,limit-temp = <60>;
-		qcom,temp-hysteresis = <10>;
-		qcom,freq-step = <2>;
+		qcom,limit-temp = <65>; // [PLATFORM]-Change by TCTSZ.cuiping.shi, change low cpu freq , 2014/03/31
+		qcom,temp-hysteresis = <6>; // [PLATFORM]-Change by TCTSZ.cuiping.shi, change low cpu freq , 2014/03/31
+		qcom,freq-step = <1>; // [PLATFORM]-Change by TCTSZ.cuiping.shi, change low cpu freq step form 2 to 1, 2014/03/31
 		qcom,freq-control-mask = <0xf>;
-		qcom,core-limit-temp = <80>;
+		qcom,core-limit-temp = <75>; // [PLATFORM]-Change by TCTSZ.cuiping.shi, change low cpu freq , 2014/03/31
 		qcom,core-temp-hysteresis = <10>;
 		qcom,core-control-mask = <0xe>;
 		qcom,hotplug-temp = <110>;
 		qcom,hotplug-temp-hysteresis = <20>;
 		qcom,cpu-sensors = "tsens_tz_sensor5", "tsens_tz_sensor5",
 				"tsens_tz_sensor5", "tsens_tz_sensor5";
-		qcom,default-temp = <80>;
-		qcom,efuse-data = <0xfc4b8000 0x1000 23 30 0x3>;
-		qcom,efuse-temperature-map = <0x1 70>;
 		qcom,vdd-restriction-temp = <5>;
 		qcom,vdd-restriction-temp-hysteresis = <10>;
 		vdd-dig-supply = <&pm8110_s1_floor_corner>;
@@ -1085,7 +1100,18 @@
 		qcom,hw-settle-time = <0>;
 		qcom,fast-avg-setup = <0>;
 	};
-
+// add by shicuiping start
+	chan@B {
+		label = "chg_therm";
+		reg = <0x0B>;
+		qcom,decimation = <0>;
+		qcom,pre-div-channel-scaling = <0>;
+		qcom,calibration-type = "ratiometric";
+		qcom,scale-function = <1>;
+		qcom,hw-settle-time = <2>;
+		qcom,fast-avg-setup = <0>;
+	};
+// add by shicuiping stop
 	chan@30 {
 		label = "batt_therm";
 		reg = <0x30>;

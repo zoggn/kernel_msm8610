@@ -561,7 +561,9 @@ void kdb_syslog_data(char *syslog_data[4])
 static void __call_console_drivers(unsigned start, unsigned end)
 {
 	struct console *con;
-
+#ifdef CONFIG_JRD_PRINTD
+    extern void printd_dump(char *, int);
+#endif    
 	for_each_console(con) {
 		if (exclusive_console && con != exclusive_console)
 			continue;
@@ -569,6 +571,10 @@ static void __call_console_drivers(unsigned start, unsigned end)
 				(cpu_online(smp_processor_id()) ||
 				(con->flags & CON_ANYTIME)))
 			con->write(con, &LOG_BUF(start), end - start);
+
+#ifdef CONFIG_JRD_PRINTD
+		printd_dump(&LOG_BUF(start), end - start);
+#endif
 	}
 }
 
@@ -754,6 +760,23 @@ static bool printk_time = 1;
 static bool printk_time = 0;
 #endif
 module_param_named(time, printk_time, bool, S_IRUGO | S_IWUSR);
+
+//* add by zhoujinggao@tcl.com for print CPUID and PID 2014-02-17*/
+#if defined(CONFIG_PRINTK_CPU_ID)
+static int printk_cpu_id = 1;
+#else
+static int printk_cpu_id = 0;
+#endif
+module_param_named(cpu, printk_cpu_id, int, S_IRUGO | S_IWUSR);
+
+#if defined(CONFIG_PRINTK_PID)
+static int printk_pid = 1;
+#else
+static int printk_pid;
+#endif
+module_param_named(pid, printk_pid, int, S_IRUGO | S_IWUSR);
+
+//*add by zhoujinggao@tcl.com for print CPUID and PID 2014-02-17*/
 
 static bool always_kmsg_dump;
 module_param_named(always_kmsg_dump, always_kmsg_dump, bool, S_IRUGO | S_IWUSR);
@@ -999,6 +1022,33 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 					emit_log_char(*tp);
 				printed_len += tlen;
 			}
+/* add by zhoujinggao@tcl.com for print CPUID and PID 2014-02-17 */
+           if (printk_cpu_id) 
+            {
+                   
+                   char tbuf[10], *tp;
+                   unsigned tlen;
+
+                   tlen = sprintf(tbuf, "c%u ", printk_cpu);
+
+                   for (tp = tbuf; tp < tbuf + tlen; tp++)
+                           emit_log_char(*tp);
+                   printed_len += tlen;
+           }
+
+           if (printk_pid) 
+            {
+                   
+                   char tbuf[10], *tp;
+                   unsigned tlen;
+
+                   tlen = sprintf(tbuf, "%6u ", current->pid);
+
+                   for (tp = tbuf; tp < tbuf + tlen; tp++)
+                           emit_log_char(*tp);
+                   printed_len += tlen;
+           }
+/* end by zhoujinggao@tcl.com for print CPUID and PID 2014-02-17 */
 
 			if (!*p)
 				break;
@@ -1324,6 +1374,26 @@ void wake_up_klogd(void)
 		this_cpu_or(printk_pending, PRINTK_PENDING_WAKEUP);
 }
 
+// add by zhoujinggao from kernel git 2014-02-25
+void log_output_console( void )
+{
+	unsigned	_con_start, _log_end;
+
+	if ( console_sem.count <= 0 )
+	{
+		printk( "Console LOCKED!\n" );
+
+		while( con_start != log_end )
+		{
+			_con_start = con_start;
+			_log_end = log_end;
+			con_start = log_end;		/* Flush */
+			call_console_drivers( _con_start, _log_end );
+		}
+	}
+}
+// add by zhoujinggao from kernel git 2014-02-25
+
 /**
  * console_unlock - unlock the console system
  *
@@ -1385,6 +1455,8 @@ again:
 	raw_spin_lock(&logbuf_lock);
 	if (con_start != log_end)
 		retry = 1;
+	else
+		retry = 0;
 	raw_spin_unlock_irqrestore(&logbuf_lock, flags);
 
 	if (retry && console_trylock())

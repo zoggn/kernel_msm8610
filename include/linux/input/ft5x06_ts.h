@@ -22,7 +22,7 @@
 #define FT5X16_ID		0x0A
 #define FT5X36_ID		0x14
 #define FT6X06_ID		0x06
-
+#define VIRTUAL_KEY		1
 struct fw_upgrade_info {
 	bool auto_cal;
 	u16 delay_aa;
@@ -58,6 +58,16 @@ struct ft5x06_ts_platform_data {
 	bool fw_vkey_support;
 	bool no_force_update;
 	bool i2c_pull_up;
+#if VIRTUAL_KEY
+	//const char *name;
+	int disp_maxx;
+	int disp_maxy;
+	int pan_maxx;
+	int pan_maxy;
+	int *keycodes;
+	int num_keys;
+	int y_offset;
+#endif
 	bool ignore_id_check;
 	int (*power_init) (bool);
 	int (*power_on) (bool);

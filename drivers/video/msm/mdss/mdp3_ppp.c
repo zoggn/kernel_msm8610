@@ -355,14 +355,20 @@ void mdp3_ppp_kickoff(void)
 	mdp3_ppp_pipe_wait();
 }
 
-int mdp3_ppp_turnon(struct msm_fb_data_type *mfd, int on_off)
+
+
+//int mdp3_ppp_turnon(struct msm_fb_data_type *mfd, int on_off)
+int mdp3_ppp_turnon(struct msm_fb_data_type *mfd)
 {
 	struct mdss_panel_info *panel_info = mfd->panel_info;
 	uint64_t ab = 0, ib = 0;
 	int rate = 0;
 	int rc;
-
-	if (on_off) {
+rc = mdp3_acquire_ppp();
+if (rc) {
+pr_err("fail to acquire ppp resource\n");
+	return rc;
+}
 		rate = MDP_BLIT_CLK_RATE;
 		ab = panel_info->xres * panel_info->yres *
 			panel_info->mipi.frame_rate *
@@ -370,20 +376,43 @@ int mdp3_ppp_turnon(struct msm_fb_data_type *mfd, int on_off)
 			MDP_PPP_DYNAMIC_FACTOR *
 			MDP_PPP_MAX_READ_WRITE;
 		ib = (ab * 3) / 2;
-	}
+ 			
 	mdp3_clk_set_rate(MDP3_CLK_CORE, rate, MDP3_CLIENT_PPP);
-	rc = mdp3_clk_enable(on_off, 0);
+//	rc = mdp3_clk_enable(on_off, 0);
+	rc = mdp3_clk_enable(1, 0);
 	if (rc < 0) {
 		pr_err("%s: mdp3_clk_enable failed\n", __func__);
 		return rc;
 	}
 	rc = mdp3_bus_scale_set_quota(MDP3_CLIENT_PPP, ab, ib);
 	if (rc < 0) {
-		mdp3_clk_enable(!on_off, 0);
-		pr_err("%s: scale_set_quota failed\n", __func__);
+		
+		//mdp3_clk_enable(!on_off, 0);
+		mdp3_clk_enable(0, 0);
+
 		return rc;
 	}
-	ppp_stat->bw_on = on_off;
+	//ppp_stat->bw_on = on_off;
+	ppp_stat->bw_on = 1;
+	return 0;
+}
+
+
+int mdp3_ppp_turnoff(struct msm_fb_data_type *mfd)
+{
+int rc;
+
+	mdp3_clk_set_rate(MDP3_CLK_CORE, 0, MDP3_CLIENT_PPP);
+	rc = mdp3_clk_enable(0, 0);
+	if (rc < 0)
+		pr_err("%s: mdp3_clk_enable failed\n", __func__);
+
+	rc = mdp3_bus_scale_set_quota(MDP3_CLIENT_PPP, 0, 0);
+	if (rc < 0)
+		pr_err("%s: scale_set_quota failed\n", __func__);
+
+	ppp_stat->bw_on = 0;
+	mdp3_release_ppp();
 	return 0;
 }
 
@@ -1018,7 +1047,7 @@ static void mdp3_free_bw_wq_handler(struct work_struct *work)
 
 	mutex_lock(&ppp_stat->config_ppp_mutex);
 	if (ppp_stat->bw_on) {
-		mdp3_ppp_turnon(mfd, 0);
+		mdp3_ppp_turnoff(mfd);
 		rc = mdp3_iommu_disable(MDP3_CLIENT_PPP);
 		if (rc < 0)
 			WARN(1, "Unable to disable ppp iommu\n");
@@ -1046,7 +1075,8 @@ static void mdp3_ppp_blit_wq_handler(struct work_struct *work)
 			pr_err("%s: mdp3_iommu_enable failed\n", __func__);
 			return;
 		}
-		mdp3_ppp_turnon(mfd, 1);
+	//	mdp3_ppp_turnon(mfd, 1);
+		rc = mdp3_ppp_turnon(mfd);
 		if (rc < 0) {
 			mdp3_iommu_disable(MDP3_CLIENT_PPP);
 			mutex_unlock(&ppp_stat->config_ppp_mutex);

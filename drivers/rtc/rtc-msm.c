@@ -319,6 +319,18 @@ msmrtc_timeremote_set_time(struct device *dev, struct rtc_time *tm)
 	return 0;
 }
 
+//PR608317-wenba.shao write default time for drm -begin
+#define DEFAULT_DATE_TIME (mktime(2011,1,1,0,0,0))
+static ssize_t rtc_default_show(struct device *dev,
+        struct device_attribute *attr, char *buf)
+{
+    unsigned long rtc_time;
+    rtc_time = DEFAULT_DATE_TIME;
+    return   snprintf(buf, 13, "%ld\n", rtc_time);
+}
+static DEVICE_ATTR(rtc_default, 0664, rtc_default_show, NULL);
+//PR608317-wenba.shao write default time for drm -end
+
 static int
 msmrtc_timeremote_read_time(struct device *dev, struct rtc_time *tm)
 {
@@ -654,6 +666,15 @@ msmrtc_probe(struct platform_device *pdev)
 		rc = PTR_ERR(rtc_pdata->rtc);
 		goto fail_cb_setup;
 	}
+
+//PR608317-wenba.shao write default time for drm -begin
+    rc = sysfs_create_file(&rtc_pdata->rtc->dev.kobj, &dev_attr_rtc_default.attr);
+    if (rc) {
+        pr_debug(KERN_ERR
+               "dlbn_sysfs_init:"\
+               "sysfs_create failed\n");
+    }
+//PR608317-wenba.shao write default time for drm -end
 
 #ifdef CONFIG_RTC_SECURE_TIME_SUPPORT
 	rtc_pdata->rtcsecure = rtc_device_register("msm_rtc_secure",

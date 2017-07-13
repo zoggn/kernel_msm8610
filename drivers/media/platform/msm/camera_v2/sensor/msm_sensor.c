@@ -20,8 +20,9 @@
 #include <mach/rpm-regulator-smd.h>
 #include <linux/regulator/consumer.h>
 
+//#define MSM_SENSOR_C_DEBUG
 #undef CDBG
-#ifdef CONFIG_MSMB_CAMERA_DEBUG
+#ifdef MSM_SENSOR_C_DEBUG
 #define CDBG(fmt, args...) pr_err(fmt, ##args)
 #else
 #define CDBG(fmt, args...) do { } while (0)
@@ -566,7 +567,7 @@ int32_t msm_sensor_init_gpio_pin_tbl(struct device_node *of_node,
 		}
 		gconf->gpio_num_info->gpio_num[SENSOR_GPIO_STANDBY] =
 			gpio_array[val];
-		CDBG("%s qcom,gpio-reset %d\n", __func__,
+		CDBG("%s qcom,gpio-standby %d\n", __func__,
 			gconf->gpio_num_info->gpio_num[SENSOR_GPIO_STANDBY]);
 	}
 
@@ -1220,7 +1221,7 @@ int32_t msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 		return rc;
 	}
 
-	CDBG("%s: read id: %x expected id %x:\n", __func__, chipid,
+	printk(KERN_DEBUG "%s: read id: %x expected id: %x\n", __func__, chipid,
 		s_ctrl->sensordata->slave_info->sensor_id);
 	if (chipid != s_ctrl->sensordata->slave_info->sensor_id) {
 		pr_err("msm_sensor_match_id chip id doesnot match\n");
@@ -1276,6 +1277,16 @@ static long msm_sensor_subdev_ioctl(struct v4l2_subdev *sd,
 		return 0;
 	case MSM_SD_SHUTDOWN:
 		return 0;
+//Begin add by weicai.long@tcl.com for camera OTP feature, 2013/12/24.
+	case VIDIOC_MSM_OTP_CFG:
+		if(s_ctrl->func_tbl->otp_config)
+			return s_ctrl->func_tbl->otp_config(s_ctrl, argp);
+		return 0;
+	case VIDIOC_MSM_OTP_CLEARBUFF_CFG:
+		if(s_ctrl->func_tbl->otp_clearbuff_config)
+			return s_ctrl->func_tbl->otp_clearbuff_config(s_ctrl, argp);
+		return 0;
+//End add by weicai.long@tcl.com for camera OTP feature, 2013/12/24.
 	default:
 		return -ENOIOCTLCMD;
 	}
@@ -1633,7 +1644,7 @@ int32_t msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl,
 				break;
 			}
 			s_ctrl->sensor_state = MSM_SENSOR_POWER_UP;
-			pr_err("%s:%d sensor state %d\n", __func__, __LINE__,
+			CDBG("%s:%d sensor state %d\n", __func__, __LINE__,
 				s_ctrl->sensor_state);
 		} else {
 			rc = -EFAULT;
@@ -1661,7 +1672,7 @@ int32_t msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl,
 				break;
 			}
 			s_ctrl->sensor_state = MSM_SENSOR_POWER_DOWN;
-			pr_err("%s:%d sensor state %d\n", __func__, __LINE__,
+			CDBG("%s:%d sensor state %d\n", __func__, __LINE__,
 				s_ctrl->sensor_state);
 		} else {
 			rc = -EFAULT;
@@ -1889,7 +1900,7 @@ int32_t msm_sensor_i2c_probe(struct i2c_client *client,
 	uint32_t session_id;
 	unsigned long mount_pos;
 
-	CDBG("%s %s_i2c_probe called\n", __func__, client->name);
+	printk(KERN_DEBUG "%s %s_i2c_probe called\n", __func__, client->name);
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		pr_err("%s %s i2c_check_functionality failed\n",
 			__func__, client->name);

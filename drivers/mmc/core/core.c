@@ -283,13 +283,13 @@ mmc_start_request(struct mmc_host *host, struct mmc_request *mrq)
 			mmc_hostname(host), mrq->data->blksz,
 			mrq->data->blocks, mrq->data->flags,
 			mrq->data->timeout_ns / 1000000,
-			mrq->data->timeout_clks);
+			mrq->data->timeout_clks);		   
 	}
 
 	if (mrq->stop) {
 		pr_debug("%s:     CMD%u arg %08x flags %08x\n",
 			 mmc_hostname(host), mrq->stop->opcode,
-			 mrq->stop->arg, mrq->stop->flags);
+			 mrq->stop->arg, mrq->stop->flags);		
 	}
 
 	WARN_ON(!host->claimed);
@@ -2306,6 +2306,17 @@ static int mmc_do_erase(struct mmc_card *card, unsigned int from,
 	cmd.arg = arg;
 	cmd.flags = MMC_RSP_SPI_R1B | MMC_RSP_R1B | MMC_CMD_AC;
 	cmd.cmd_timeout_ms = mmc_erase_timeout(card, arg, qty);
+	//add by jch for recovery wipe data    
+	if( (cmd.arg == MMC_SECURE_ERASE_ARG || cmd.arg == MMC_ERASE_ARG)&& (!strcmp(mmc_hostname(card->host),"mmc0"))
+		&& (!mmc_erase_group_aligned(card,from,to))){
+			       pr_info("JCH:%s MMC_ERASE:addr is not divisible,so we try to change erase type.\n",mmc_hostname(card->host));
+				if(cmd.arg == MMC_SECURE_ERASE_ARG && mmc_can_secure_erase_trim(card))
+			  		cmd.arg = MMC_SECURE_TRIM1_ARG;
+				else if(cmd.arg == MMC_ERASE_ARG
+				   ||(cmd.arg == MMC_SECURE_ERASE_ARG && !mmc_can_secure_erase_trim(card)))
+					cmd.arg = MMC_TRIM_ARG;
+	}
+//end add by jch for recovery wipe data
 	err = mmc_wait_for_cmd(card->host, &cmd, 0);
 	if (err) {
 		pr_err("mmc_erase: erase error %d, status %#x\n",
@@ -3431,7 +3442,6 @@ EXPORT_SYMBOL(mmc_cache_ctrl);
 int mmc_suspend_host(struct mmc_host *host)
 {
 	int err = 0;
-
 	if (mmc_bus_needs_resume(host))
 		return 0;
 

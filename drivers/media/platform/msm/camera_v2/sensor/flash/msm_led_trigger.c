@@ -52,8 +52,8 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 	struct msm_camera_led_cfg_t *cfg = (struct msm_camera_led_cfg_t *)data;
 	uint32_t i;
 	uint32_t curr_l, max_curr_l;
-	CDBG("called led_state %d\n", cfg->cfgtype);
-
+	
+	pr_err("called led_state %d\n", cfg->cfgtype);
 	if (!fctrl) {
 		pr_err("failed\n");
 		return -EINVAL;
@@ -69,19 +69,24 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 		break;
 
 	case MSM_CAMERA_LED_LOW:
-		if (fctrl->torch_trigger) {
-			max_curr_l = fctrl->torch_max_current;
-			if (cfg->led_current > 0 &&
-					cfg->led_current < max_curr_l) {
-				curr_l = cfg->led_current;
-			} else {
-				curr_l = fctrl->torch_op_current;
-				pr_err("LED current clamped to %d\n",
-					curr_l);
-			}
-			led_trigger_event(fctrl->torch_trigger,
-				curr_l);
-		}
+//Begin-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
+//		if (fctrl->torch_trigger) {
+//			max_curr_l = fctrl->torch_max_current;
+//			if (cfg->led_current > 0 &&
+//					cfg->led_current < max_curr_l) {
+//				curr_l = cfg->led_current;
+//			} else {
+//				curr_l = fctrl->torch_op_current;
+//				pr_err("LED current clamped to %d\n",
+//					curr_l);
+//			}
+//			led_trigger_event(fctrl->torch_trigger,
+//				curr_l);
+//		}
+        for (i = 0; i < fctrl->num_sources; i++)
+            if (fctrl->flash_trigger[i])
+                led_trigger_event(fctrl->flash_trigger[i], LED_HALF);
+//End-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
 		break;
 
 	case MSM_CAMERA_LED_HIGH:

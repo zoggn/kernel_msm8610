@@ -1866,6 +1866,8 @@ static int report_cc_based_soc(struct qpnp_bms_chip *chip)
 
 	if (chip->last_soc != soc && !chip->last_soc_unbound)
 		chip->last_soc_change_sec = last_change_sec;
+	if(is_battery_full(chip) ) // [PLATFORM]-Add by TCTSZ.cuiping.shi, for charging status change, 2014/04/08
+		soc =100;
 
 	pr_debug("last_soc = %d, calculated_soc = %d, soc = %d, time since last change = %d\n",
 			chip->last_soc, chip->calculated_soc,
@@ -3468,7 +3470,7 @@ static int read_shutdown_soc(struct qpnp_bms_chip *chip)
 	else
 		shutdown_soc = SOC_INVALID;
 
-	pr_debug("stored soc = 0x%02x, shutdown_soc = %d\n",
+	pr_info("stored soc = 0x%02x, shutdown_soc = %d\n",// [PLATFORM]-Change by TCTSZ.cuiping.shi, for print log, 2014/04/02
 			stored_soc, shutdown_soc);
 	return shutdown_soc;
 }
@@ -3535,7 +3537,8 @@ static void load_shutdown_data(struct qpnp_bms_chip *chip)
 		chip->shutdown_soc = shutdown_soc;
 	}
 
-	pr_debug("raw_soc = %d shutdown_soc = %d shutdown_iavg = %d shutdown_soc_invalid = %d, battery_removed = %d\n",
+	// [PLATFORM]-Change by TCTSZ.cuiping.shi, for print log, 2014/04/02
+	pr_info("raw_soc = %d shutdown_soc = %d shutdown_iavg = %d shutdown_soc_invalid = %d, battery_removed = %d\n",
 			calculated_soc,
 			chip->shutdown_soc,
 			chip->shutdown_iavg_ma,
@@ -3663,11 +3666,11 @@ assign_data:
 	chip->flat_ocv_threshold_uv = batt_data->flat_ocv_threshold_uv;
 
 	/* Override battery properties if specified in the battery profile */
-	if (batt_data->max_voltage_uv >= 0 && dt_data)
+	if (batt_data->max_voltage_uv > 0 && dt_data) // change by shicuiping
 		chip->max_voltage_uv = batt_data->max_voltage_uv;
-	if (batt_data->cutoff_uv >= 0 && dt_data)
+	if (batt_data->cutoff_uv > 0 && dt_data) // change by shicuiping
 		chip->v_cutoff_uv = batt_data->cutoff_uv;
-	if (batt_data->iterm_ua >= 0 && dt_data)
+	if (batt_data->iterm_ua > 0 && dt_data) // change by shicuiping
 		chip->chg_term_ua = batt_data->iterm_ua;
 
 	if (chip->pc_temp_ocv_lut == NULL) {

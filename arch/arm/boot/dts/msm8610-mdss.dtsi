@@ -41,11 +41,11 @@
 		qcom,platform-strength-ctrl = [ff 06];
 		qcom,platform-bist-ctrl = [03 03 00 00 0f 00];
 		qcom,platform-regulator-settings = [02 08 05 00 20 03];
-		qcom,platform-lane-config = [80 45 00 00 01 66
-		80 45 00 00 01 66
-		80 45 00 00 01 66
-		80 45 00 00 01 66
-		40 67 00 00 01 88];
+		qcom,platform-lane-config = [80 45 00 00 01 66 /*lane0**/
+                    80 45 00 00 01 66 /*lane1*/
+                    80 45 00 00 01 66 /*lane2*/
+                    80 45 00 00 01 66 /*lane3*/
+                    40 67 00 00 01 88]; /*Clk*/
 
 		qcom,platform-supply-entry1 {
 			qcom,supply-name = "vdd";

@@ -161,6 +161,12 @@ from_old_alarm_set:
 			rv = -EFAULT;
 			goto err1;
 		}
+// [PLATFORM]-Add-BEGIN by TCTSZ.cuiping.shi, for print log 2014/03/26
+		printk(KERN_EMERG "android alarm set Current task:%s(%d) Parent task:%s(%d)\n",
+			current->comm, current->pid,
+			current->real_parent->comm,
+			current->real_parent->pid);
+// [PLATFORM]-Add-END by TCTSZ.cuiping.shi, for print log 2014/03/26
 		rv = alarm_set_rtc(new_rtc_time);
 		spin_lock_irqsave(&alarm_slock, flags);
 		alarm_pending |= ANDROID_ALARM_TIME_CHANGE_MASK;

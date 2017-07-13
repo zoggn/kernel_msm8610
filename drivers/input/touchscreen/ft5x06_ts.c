@@ -142,6 +142,21 @@
 #define FT_CAL_MASK		0x70
 
 #define FT_INFO_MAX_LEN		512
+#if VIRTUAL_KEY
+#define MAX_BUF_SIZE	256
+#define VKEY_VER_CODE	"0x01"
+
+#define HEIGHT_SCALE_NUM 8
+#define HEIGHT_SCALE_DENOM 10
+
+#define VKEY_Y_OFFSET_DEFAULT 0
+
+#define BORDER_ADJUST_NUM 3
+#define BORDER_ADJUST_DENOM 4
+struct kobject *vkey_kobj;
+static char *vkey_buf;
+
+#endif
 
 #define FT_BLOADER_SIZE_OFF	12
 #define FT_BLOADER_NEW_SIZE	30
@@ -207,7 +222,12 @@ struct ft5x06_ts_data {
 	struct early_suspend early_suspend;
 #endif
 };
-
+/*ADD-BEGIN---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/
+#define TYPE_B
+/*ADD-END--chang the report protocol to fix the issue of unlocked- --- bug 629336---qifu.cheng --- 14/3/25*/
+//modify by junfeng.zhou.sz@tcl.com for delete the tmd2771x with 625233 begin . 20140319
+//extern  int call_flag;
+//modify by junfeng.zhou.sz@tcl.com for delete the tmd2771x with 625233 end . 
 static int ft5x06_i2c_read(struct i2c_client *client, char *writebuf,
 			   int writelen, char *readbuf, int readlen)
 {
@@ -315,8 +335,15 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *dev_id)
 	int rc, i;
 	u32 id, x, y, status, num_touches;
 	u8 reg = 0x00, *buf;
+/*ADD-BEGIN---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/
+#ifndef TYPE_B	
 	bool update_input = false;
-
+#else
+	u32 pressure;
+	int fingerdown = 0;
+#endif
+/*ADD-END---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/
+	printk("Richard---ft5x06_ts_interrupt-%d-----------\n",__LINE__);
 	if (!data) {
 		pr_err("%s: Invalid data\n", __func__);
 		return IRQ_HANDLED;
@@ -331,14 +358,17 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *dev_id)
 		dev_err(&data->client->dev, "%s: read data fail\n", __func__);
 		return IRQ_HANDLED;
 	}
-
+ 
 	for (i = 0; i < data->pdata->num_max_touches; i++) {
 		id = (buf[FT_TOUCH_ID_POS + FT_ONE_TCH_LEN * i]) >> 4;
 		if (id >= FT_MAX_ID)
 			break;
-
+/*ADD-BEGIN---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/		
+#ifndef TYPE_B
 		update_input = true;
-
+#endif
+/*ADD-END---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/
+		
 		x = (buf[FT_TOUCH_X_H_POS + FT_ONE_TCH_LEN * i] & 0x0F) << 8 |
 			(buf[FT_TOUCH_X_L_POS + FT_ONE_TCH_LEN * i]);
 		y = (buf[FT_TOUCH_Y_H_POS + FT_ONE_TCH_LEN * i] & 0x0F) << 8 |
@@ -348,6 +378,8 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *dev_id)
 
 		num_touches = buf[FT_TD_STATUS] & FT_STATUS_NUM_TP_MASK;
 
+/*ADD-BEGIN---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/
+#ifndef TYPE_B
 		/* invalid combination */
 		if (!num_touches && !status && !id)
 			break;
@@ -360,20 +392,48 @@ static irqreturn_t ft5x06_ts_interrupt(int irq, void *dev_id)
 		} else {
 			input_mt_report_slot_state(ip_dev, MT_TOOL_FINGER, 0);
 		}
-	}
-
+	
 	if (update_input) {
 		input_mt_report_pointer_emulation(ip_dev, false);
 		input_sync(ip_dev);
 	}
+#else
+              if (status == FT_TOUCH_DOWN || status == FT_TOUCH_CONTACT) {
+                          pressure = FT_PRESS;
+                          fingerdown++;
+                  } else {
+                          pressure = 0;
+                  }
+          
 
+                  input_report_abs(ip_dev, ABS_MT_TRACKING_ID, id);
+                  input_report_abs(ip_dev, ABS_MT_POSITION_X, x);
+                  input_report_abs(ip_dev, ABS_MT_POSITION_Y, y);
+        
+                  input_report_abs(ip_dev, ABS_MT_PRESSURE, pressure);
+                  input_report_abs(ip_dev, ABS_MT_TOUCH_MAJOR, pressure);
+                  input_mt_sync(ip_dev);
+          }
+  
+          input_report_key(ip_dev, BTN_TOUCH, !!fingerdown);
+          input_sync(ip_dev);
+#endif		  
+/*ADD-END---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/
 	return IRQ_HANDLED;
 }
 
 static int ft5x06_power_on(struct ft5x06_ts_data *data, bool on)
 {
 	int rc;
-
+//modify by junfeng.zhou.sz@tcl.com for delete the tmd2771x with 625233 begin . 20140319
+   /* if(call_flag)
+    {
+        return 0;
+    }
+    else
+    {
+    }*/
+//modify by junfeng.zhou.sz@tcl.com for delete the tmd2771x with 625233 end . 
 	if (!on)
 		goto power_off;
 
@@ -482,9 +542,14 @@ pwr_deinit:
 static int ft5x06_ts_suspend(struct device *dev)
 {
 	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
+/*ADD-BEGIN---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/	
+#ifndef TYPE_B
 	char txbuf[2], i;
-	int err;
-
+#else
+	char txbuf[2];
+#endif
+/*ADD-END---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/
+	//int err;/*ADD---remove this to  fix the I2C timeout's issue--- bug 626463--- 14/3/20*/
 	if (data->loading_fw) {
 		dev_info(dev, "Firmware loading in process...\n");
 		return 0;
@@ -496,12 +561,17 @@ static int ft5x06_ts_suspend(struct device *dev)
 	}
 
 	disable_irq(data->client->irq);
-
+/*ADD-BEGIN---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/	
+#ifndef TYPE_B
 	/* release all touches */
 	for (i = 0; i < data->pdata->num_max_touches; i++) {
 		input_mt_slot(data->input_dev, i);
 		input_mt_report_slot_state(data->input_dev, MT_TOOL_FINGER, 0);
 	}
+#else
+	input_report_abs(data->input_dev, ABS_MT_TOUCH_MAJOR, 0); //release point
+#endif
+/*ADD-END---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/
 	input_mt_report_pointer_emulation(data->input_dev, false);
 	input_sync(data->input_dev);
 
@@ -510,7 +580,7 @@ static int ft5x06_ts_suspend(struct device *dev)
 		txbuf[1] = FT_PMODE_HIBERNATE;
 		ft5x06_i2c_write(data->client, txbuf, sizeof(txbuf));
 	}
-
+#if 0/*ADD---remove this to  fix the I2C timeout's issue--- bug 626463--- 14/3/20*/
 	if (data->pdata->power_on) {
 		err = data->pdata->power_on(false);
 		if (err) {
@@ -524,11 +594,11 @@ static int ft5x06_ts_suspend(struct device *dev)
 			goto pwr_off_fail;
 		}
 	}
-
+#endif
 	data->suspended = true;
 
 	return 0;
-
+#if 0/*ADD---remove this to  fix the I2C timeout's issue--- bug 626463--- 14/3/20*/
 pwr_off_fail:
 	if (gpio_is_valid(data->pdata->reset_gpio)) {
 		gpio_set_value_cansleep(data->pdata->reset_gpio, 0);
@@ -537,18 +607,19 @@ pwr_off_fail:
 	}
 	enable_irq(data->client->irq);
 	return err;
+#endif		
 }
 
 static int ft5x06_ts_resume(struct device *dev)
 {
 	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
-	int err;
+	//int err;/*ADD---remove this to  fix the I2C timeout's issue--- bug 626463--- 14/3/20*/
 
 	if (!data->suspended) {
 		dev_dbg(dev, "Already in awake state\n");
 		return 0;
 	}
-
+#if 0/*ADD---remove this to  fix the I2C timeout's issue--- bug 626463--- 14/3/20*/
 	if (data->pdata->power_on) {
 		err = data->pdata->power_on(true);
 		if (err) {
@@ -562,7 +633,7 @@ static int ft5x06_ts_resume(struct device *dev)
 			return err;
 		}
 	}
-
+#endif
 	if (gpio_is_valid(data->pdata->reset_gpio)) {
 		gpio_set_value_cansleep(data->pdata->reset_gpio, 0);
 		msleep(data->pdata->hard_rst_dly);
@@ -1035,7 +1106,48 @@ static ssize_t ft5x06_fw_name_store(struct device *dev,
 }
 
 static DEVICE_ATTR(fw_name, 0664, ft5x06_fw_name_show, ft5x06_fw_name_store);
+/*ADD -BEGIN--- optimize the EngineerMode  --- bug 554634 ---qifu.cheng added --- 14/3/26*/
+static ssize_t ft5x06_fw_ver_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
+	struct i2c_client *client = data->client;
+	u8 reg_addr;
+	int err;
+       char*module="Null";
+	reg_addr = FT_REG_FW_VER;
+	err = ft5x06_i2c_read(client, &reg_addr, 1, &data->fw_ver[0], 1);
+	if (err < 0)
+		dev_err(&client->dev, "fw major version read failed");
 
+	reg_addr =0xA8;
+	err = ft5x06_i2c_read(client, &reg_addr, 1, &data->fw_ver[1], 1);
+	
+	if (err < 0)
+		dev_err(&client->dev, "fw major version read failed");
+	if(data->fw_ver[1] == 0x80)
+		module = "eachopto";
+	else if(data->fw_ver[1] == 0x85)
+		module = "Junda";
+       else
+	   	dev_info(&client->dev,"Other unknow moduld of TP\n");
+
+	dev_info(&client->dev, "Firmware version = 0x%x\n", data->fw_ver[0]);
+	return sprintf(buf, "FT_5436I_%x_Null_%s\n",  data->fw_ver[0],module);
+}
+
+static ssize_t ft5x06_fw_ver_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t size)
+{
+	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
+	struct i2c_client *client = data->client;
+	dev_info(&client->dev, "Firmware version = %d\n", data->fw_ver[0]);
+	return size;
+}
+
+static DEVICE_ATTR(FW_VER, 0664, ft5x06_fw_ver_show, ft5x06_fw_ver_store);
+/*ADD- END--- optimize the EngineerMode  --- bug 554634 ---qifu.cheng added --- 14/3/26*/
 static bool ft5x06_debug_addr_is_valid(int addr)
 {
 	if (addr < 0 || addr > 0xFF) {
@@ -1370,6 +1482,150 @@ static int ft5x06_parse_dt(struct device *dev,
 }
 #endif
 
+#if VIRTUAL_KEY
+static ssize_t virtual_keys_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+    /*
+
+	return sprintf(buf,
+	   __stringify(EV_KEY) ":" __stringify(KEY_MENU)   ":45:540:70:60"
+	   ":" __stringify(EV_KEY) ":" __stringify(KEY_SEARCH) ":155:540:70:60"
+	   ":" __stringify(EV_KEY) ":" __stringify(KEY_BACK)  ":270:540:80:60"
+	   "\n");*/
+	   	strlcpy(buf, vkey_buf, MAX_BUF_SIZE);
+	return strnlen(buf, MAX_BUF_SIZE);
+
+}
+
+static struct kobj_attribute virtual_keys_attr = {
+	.attr = {
+		.name = "virtualkeys.ft5x06_ts",	// X WARNING: please keep it sync with *input device* name
+		.mode = S_IRUGO,
+	},
+	.show = &virtual_keys_show,
+};
+
+static struct attribute *virtual_key_properties_attrs[] = {
+	&virtual_keys_attr.attr,
+	NULL
+};
+
+static struct attribute_group vkey_group = {
+	.attrs = virtual_key_properties_attrs,
+};
+static int vkey_parse_dt(struct device *dev,struct ft5x06_ts_platform_data *pdata)
+{
+	struct device_node *np = dev->of_node;
+	struct property *prop;
+	int width, height, center_x, center_y;
+	int x1 = 0, x2 = 0, i, c = 0,  border;
+	int rc, val;
+/*Ricahrd add the second and the flag to detect which one should be used*/
+
+/*
+	rc = of_property_read_string(np, "label1", &pdata->name);
+	if (rc) {
+		dev_err(dev, "Failed to read label\n");
+		return -EINVAL;
+	}
+*/
+	rc = of_property_read_u32(np, "focaltech,disp-maxx", &pdata->disp_maxx);
+	if (rc) {
+		dev_err(dev, "Failed to read display max x\n");
+		return -EINVAL;
+	}
+
+	rc = of_property_read_u32(np, "focaltech,disp-maxy", &pdata->disp_maxy);
+	if (rc) {
+		dev_err(dev, "Failed to read display max y\n");
+		return -EINVAL;
+	}
+
+	rc = of_property_read_u32(np, "focaltech,pan-maxx", &pdata->pan_maxx);
+	if (rc) {
+		dev_err(dev, "Failed to read panel max x\n");
+		return -EINVAL;
+	}
+
+	rc = of_property_read_u32(np, "focaltech,pan-maxy", &pdata->pan_maxy);
+	if (rc) {
+		dev_err(dev, "Failed to read panel max y\n");
+		return -EINVAL;
+	}
+
+	prop = of_find_property(np, "focaltech,key-codes", NULL);
+	if (prop) {
+		pdata->num_keys = prop->length / sizeof(u32);
+		pdata->keycodes = devm_kzalloc(dev,
+			sizeof(u32) * pdata->num_keys, GFP_KERNEL);
+		if (!pdata->keycodes)
+			return -ENOMEM;
+		rc = of_property_read_u32_array(np, "focaltech,key-codes",
+				pdata->keycodes, pdata->num_keys);
+		if (rc) {
+			dev_err(dev, "Failed to read key codes\n");
+			return -EINVAL;
+		}
+	}
+
+	pdata->y_offset = VKEY_Y_OFFSET_DEFAULT;
+	rc = of_property_read_u32(np, "focaltech,y-offset", &val);
+	if (!rc)
+		pdata->y_offset = val;
+	else if (rc != -EINVAL) {
+		dev_err(dev, "Failed to read y position offset\n");
+		return rc;
+	}
+
+	vkey_buf = devm_kzalloc(dev, MAX_BUF_SIZE, GFP_KERNEL);
+	if (!vkey_buf) {
+		dev_err(dev, "Failed to allocate memory\n");
+		return -ENOMEM;
+	}
+	
+	border = (pdata->pan_maxx - pdata->disp_maxx) * 2;
+	width = ((pdata->disp_maxx - (border * (pdata->num_keys - 1)))
+			/ pdata->num_keys);
+	height = (pdata->pan_maxy - pdata->disp_maxy);
+	center_y = pdata->disp_maxy + (height / 2) + pdata->y_offset;
+	height = height * HEIGHT_SCALE_NUM / HEIGHT_SCALE_DENOM;
+
+	x2 -= border * BORDER_ADJUST_NUM / BORDER_ADJUST_DENOM;
+
+	for (i = 0; i < pdata->num_keys; i++) {
+		x1 = x2 + border;
+		x2 = x2 + border + width;
+		center_x = x1 + (x2 - x1) / 2;
+		c += snprintf(vkey_buf + c, MAX_BUF_SIZE - c,
+				"%s:%d:%d:%d:%d:%d\n",
+				VKEY_VER_CODE, pdata->keycodes[i],
+				center_x, center_y, width, height);
+	}
+
+	vkey_buf[c] = '\0';
+	return 0;
+}
+static int vkeys_init(struct kobject *kobj,const struct attribute_group *grp,bool on)
+{
+	int err=0;
+		if(!on)
+			goto release_key;
+		
+		vkey_kobj = kobject_create_and_add("board_properties", NULL);
+		if (vkey_kobj) {
+			err = sysfs_create_group(vkey_kobj,grp);//&vkey_group
+		}
+		if (!vkey_kobj || err) {
+			printk(KERN_INFO "failed to create board_properties\n");
+			kobject_put(vkey_kobj);
+		}
+		return 0;
+release_key:
+	sysfs_remove_group(vkey_kobj, grp);//&vkey_group
+	kobject_put(vkey_kobj);
+	return 1;
+}
+#endif 
 static int ft5x06_ts_probe(struct i2c_client *client,
 			   const struct i2c_device_id *id)
 {
@@ -1380,7 +1636,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 	u8 reg_value;
 	u8 reg_addr;
 	int err, len;
-
+ printk("[Rihcard]------------------------------%s\n",__func__);
 	if (client->dev.of_node) {
 		pdata = devm_kzalloc(&client->dev,
 			sizeof(struct ft5x06_ts_platform_data), GFP_KERNEL);
@@ -1394,6 +1650,13 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 			dev_err(&client->dev, "DT parsing failed\n");
 			return err;
 		}
+	#if VIRTUAL_KEY	
+		err = vkey_parse_dt(&client->dev, pdata);
+		if (err) {
+			dev_err(&client->dev, "DT parsing failed\n");
+		return err;
+		}
+	#endif
 	} else
 		pdata = client->dev.platform_data;
 
@@ -1453,8 +1716,14 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 	__set_bit(EV_ABS, input_dev->evbit);
 	__set_bit(BTN_TOUCH, input_dev->keybit);
 	__set_bit(INPUT_PROP_DIRECT, input_dev->propbit);
-
+/*ADD-BEGIN---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/	
+#ifndef TYPE_B
 	input_mt_init_slots(input_dev, pdata->num_max_touches);
+#else
+    input_set_abs_params(input_dev, ABS_MT_TRACKING_ID, 0,5, 0, 0);
+    input_set_abs_params(input_dev, ABS_MT_TOUCH_MAJOR, 0, FT_PRESS, 0, 0);
+#endif
+/*ADD-END---chang the report protocol to fix the issue of unlocked  --- bug 629336---qifu.cheng --- 14/3/25*/
 	input_set_abs_params(input_dev, ABS_MT_POSITION_X, pdata->x_min,
 			     pdata->x_max, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_POSITION_Y, pdata->y_min,
@@ -1535,6 +1804,15 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		dev_err(&client->dev, "version read failed");
 		goto free_reset_gpio;
 	}
+//changed the order in order to fix the NULL point issue---Richard---2013/11/26
+#if VIRTUAL_KEY
+ err =  vkeys_init(vkey_kobj, &vkey_group,true);
+ if(err)
+ 	{
+ 		dev_err(&client->dev, "The Virtual_key can't be created!\n");
+		vkeys_init(vkey_kobj, &vkey_group,false);
+ 	}
+#endif
 
 	dev_info(&client->dev, "Device ID = 0x%x\n", reg_value);
 
@@ -1544,7 +1822,15 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 	}
 
 	data->family_id = pdata->family_id;
-
+/*ADD-BEGIN---add the VERSION show when registering ---by qifu.cheng --- 14/02/26*/
+	reg_addr = FT_REG_FW_VER;
+	err = ft5x06_i2c_read(client, &reg_addr, 1, &reg_value, 1);
+	if (err < 0) {
+		dev_err(&client->dev, "version read failed");
+		goto free_reset_gpio;
+	}
+/*ADD-END----add the VERSION show when registering ---by qifu.cheng --- 14/02/26*/
+	dev_info(&client->dev, "VERSION ID = 0x%x\n", reg_value);
 	err = request_threaded_irq(client->irq, NULL,
 				   ft5x06_ts_interrupt, pdata->irqflags,
 				   client->dev.driver->name, data);
@@ -1559,6 +1845,13 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		goto irq_free;
 	}
 
+/*ADD -BEING--- optimize the EngineerMode  --- bug 554634 ---qifu.cheng added --- 14/3/26*/
+	err = device_create_file(&client->dev, &dev_attr_FW_VER);
+	if (err) {
+		dev_err(&client->dev, "sys file creation failed\n");
+		goto free_focaltech_ver_sys;
+	}
+/*ADD -END--- optimize the EngineerMode  --- bug 554634 ---qifu.cheng added --- 14/3/26*/	
 	err = device_create_file(&client->dev, &dev_attr_update_fw);
 	if (err) {
 		dev_err(&client->dev, "sys file creation failed\n");
@@ -1666,11 +1959,18 @@ free_update_fw_sys:
 	device_remove_file(&client->dev, &dev_attr_update_fw);
 free_fw_name_sys:
 	device_remove_file(&client->dev, &dev_attr_fw_name);
+/*ADD -BEING--- optimize the EngineerMode  --- bug 554634 ---qifu.cheng added --- 14/3/26*/	
+free_focaltech_ver_sys:
+		device_remove_file(&client->dev, &dev_attr_FW_VER);
+/*ADD -END--- optimize the EngineerMode  --- bug 554634 ---qifu.cheng added --- 14/3/26*/		
 irq_free:
 	free_irq(client->irq, data);
 free_reset_gpio:
 	if (gpio_is_valid(pdata->reset_gpio))
 		gpio_free(pdata->reset_gpio);
+//changed the order in order to fix the NULL point issue---Richard---2013/11/26		
+	if(vkey_kobj!=NULL)
+		vkeys_init(vkey_kobj, &vkey_group,false);
 free_irq_gpio:
 	if (gpio_is_valid(pdata->irq_gpio))
 		gpio_free(pdata->irq_gpio);

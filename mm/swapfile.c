@@ -45,7 +45,7 @@ static sector_t map_swap_entry(swp_entry_t, struct block_device**);
 
 static DEFINE_SPINLOCK(swap_lock);
 static unsigned int nr_swapfiles;
-atomic_long_t nr_swap_pages;
+long nr_swap_pages;//modify by jch for swap to zram
 /* protected with swap_lock. reading in vm_swap_full() doesn't need lock */
 long total_swap_pages;
 static int least_priority;
@@ -420,9 +420,9 @@ swp_entry_t get_swap_page(void)
 	int hp_index;
 
 	spin_lock(&swap_lock);
-	if (atomic_long_read(&nr_swap_pages) <= 0)
+	if (nr_swap_pages <= 0)
 		goto noswap;
-	atomic_long_dec(&nr_swap_pages);
+	nr_swap_pages--;
 
 	for (type = swap_list.next; type >= 0 && wrapped < 2; type = next) {
 		hp_index = atomic_xchg(&highest_priority_index, -1);
@@ -475,7 +475,7 @@ swp_entry_t get_swap_page(void)
 		next = swap_list.next;
 	}
 
-	atomic_long_inc(&nr_swap_pages);
+	nr_swap_pages++;
 noswap:
 	spin_unlock(&swap_lock);
 	return (swp_entry_t) {0};
@@ -490,20 +490,20 @@ swp_entry_t get_swap_page_of_type(int type)
 	si = swap_info[type];
 	spin_lock(&si->lock);
 	if (si && (si->flags & SWP_WRITEOK)) {
-		atomic_long_dec(&nr_swap_pages);
+		nr_swap_pages--;
 		/* This is called for allocating swap entry, not cache */
 		offset = scan_swap_map(si, 1);
 		if (offset) {
 			spin_unlock(&si->lock);
 			return swp_entry(type, offset);
 		}
-		atomic_long_inc(&nr_swap_pages);
+		nr_swap_pages++;
 	}
 	spin_unlock(&si->lock);
 	return (swp_entry_t) {0};
 }
-
-static struct swap_info_struct *swap_info_get(swp_entry_t entry)
+//ying.pang to display swap information in procrank  change
+struct swap_info_struct *swap_info_get(swp_entry_t entry)
 {
 	struct swap_info_struct *p;
 	unsigned long offset, type;
@@ -538,6 +538,12 @@ bad_nofile:
 out:
 	return NULL;
 }
+//ying.pang to display swap information in procrank  begind
+void swap_info_unlock(struct swap_info_struct *p)
+{
+        spin_unlock(&p->lock);
+}
+//ying.pang to display swap information in procrank end
 
 /*
  * This swap type frees swap entry, check if it is the highest priority swap
@@ -603,8 +609,9 @@ static unsigned char swap_entry_free(struct swap_info_struct *p,
 			p->lowest_bit = offset;
 		if (offset > p->highest_bit)
 			p->highest_bit = offset;
+
 		set_highest_priority_index(p->type);
-		atomic_long_inc(&nr_swap_pages);
+		nr_swap_pages++;
 		p->inuse_pages--;
 		if ((p->flags & SWP_BLKDEV) &&
 				disk->fops->swap_slot_free_notify)
@@ -790,7 +797,8 @@ int mem_cgroup_count_swap_user(swp_entry_t ent, struct page **pagep)
 	p = swap_info_get(ent);
 	if (p) {
 		count += swap_count(p->swap_map[swp_offset(ent)]);
-		spin_unlock(&swap_lock);
+		//spin_unlock(&swap_lock); modify by jch for swap to zram
+                spin_unlock(&p->lock);
 	}
 
 	*pagep = page;
@@ -1580,7 +1588,7 @@ static void enable_swap_info(struct swap_info_struct *p, int prio,
 		p->prio = --least_priority;
 	p->swap_map = swap_map;
 	p->flags |= SWP_WRITEOK;
-	atomic_long_add(p->pages, &nr_swap_pages);
+	nr_swap_pages += p->pages;
 	total_swap_pages += p->pages;
 
 	/* insert swap space into swap_list: */
@@ -1663,7 +1671,7 @@ SYSCALL_DEFINE1(swapoff, const char __user *, specialfile)
 			swap_info[i]->prio = p->prio--;
 		least_priority++;
 	}
-	atomic_long_sub(p->pages, &nr_swap_pages);
+	nr_swap_pages -= p->pages;
 	total_swap_pages -= p->pages;
 	p->flags &= ~SWP_WRITEOK;
 	spin_unlock(&p->lock);
@@ -2236,7 +2244,7 @@ void si_swapinfo(struct sysinfo *val)
 		if ((si->flags & SWP_USED) && !(si->flags & SWP_WRITEOK))
 			nr_to_be_unused += si->inuse_pages;
 	}
-	val->freeswap = atomic_long_read(&nr_swap_pages) + nr_to_be_unused;
+	val->freeswap = nr_swap_pages + nr_to_be_unused;
 	val->totalswap = total_swap_pages + nr_to_be_unused;
 	spin_unlock(&swap_lock);
 }

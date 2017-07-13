@@ -65,18 +65,8 @@ void *restart_reason;
 
 int pmic_reset_irq;
 static void __iomem *msm_tmr0_base;
-
-#ifdef CONFIG_MSM_DLOAD_MODE
+//modify by xiaoyong.wu for warmRestart when panic in bug 575636
 static int in_panic;
-static void *dload_mode_addr;
-static bool dload_mode_enabled;
-static void *emergency_dload_mode_addr;
-
-/* Download mode master kill-switch */
-static int dload_set(const char *val, struct kernel_param *kp);
-static int download_mode = 1;
-module_param_call(download_mode, dload_set, param_get_int,
-			&download_mode, 0644);
 static int panic_prep_restart(struct notifier_block *this,
 			      unsigned long event, void *ptr)
 {
@@ -87,7 +77,66 @@ static int panic_prep_restart(struct notifier_block *this,
 static struct notifier_block panic_blk = {
 	.notifier_call	= panic_prep_restart,
 };
+//end
+#ifdef CONFIG_MSM_DLOAD_MODE
+//add by xiaoyong.wu for dload switch
+static int panic_download_mode = 1;
+struct kobject kobj;
+ssize_t kobj_dload_show(struct kobject *kobject, struct attribute *attr,char *buf);
+ssize_t kobj_dload_store(struct kobject *kobject,struct attribute *attr,const char *buf, size_t count);
 
+struct attribute dload_attr = {
+        .name = "dload_status",
+        .mode = S_IRWXUGO,
+};
+
+static struct attribute *def_attrs[] = {
+        &dload_attr,
+        NULL,
+};
+
+struct sysfs_ops obj_dload_sysops =
+{
+        .show = kobj_dload_show,
+        .store = kobj_dload_store,
+};
+
+struct kobj_type ktype =
+{
+        .release = NULL,
+        .sysfs_ops=&obj_dload_sysops,
+        .default_attrs=def_attrs,
+};
+//add end
+static void *dload_mode_addr;
+static bool dload_mode_enabled;
+static void *emergency_dload_mode_addr;
+
+/* Download mode master kill-switch */
+static int dload_set(const char *val, struct kernel_param *kp);
+static int download_mode = 1;
+module_param_call(download_mode, dload_set, param_get_int,
+			&download_mode, 0644);
+//add by xiaoyong.wu for dload switch
+ssize_t kobj_dload_show(struct kobject *kobject, struct attribute *attr,char *buf)
+{
+    printk("panic_download_mode = %d \n",panic_download_mode);
+    return 1;
+}
+
+ssize_t kobj_dload_store(struct kobject *kobject,struct attribute *attr,const char *buf, size_t count)
+{
+    if (buf[0] == '1') {
+        panic_download_mode = 1 ;
+        printk("download_mode enable\n");
+    }
+    else if (buf[0] == '0'){
+        printk("download_mode disable\n");
+        panic_download_mode = 0 ;
+        }
+    return count;
+}
+//add end
 static void set_dload_mode(int on)
 {
 	if (dload_mode_addr) {
@@ -252,7 +301,8 @@ static void msm_restart_prepare(const char *cmd)
 	set_dload_mode(0);
 
 	/* Write download mode flags if we're panic'ing */
-	set_dload_mode(in_panic);
+    if(panic_download_mode)
+	    set_dload_mode(in_panic);
 
 	/* Write download mode flags if restart_mode says so */
 	if (restart_mode == RESTART_DLOAD)
@@ -266,7 +316,8 @@ static void msm_restart_prepare(const char *cmd)
 	pm8xxx_reset_pwr_off(1);
 
 	/* Hard reset the PMIC unless memory contents must be maintained. */
-	if (get_dload_mode() || (cmd != NULL && cmd[0] != '\0'))
+	//modify by xiaoyong.wu for warmRestart when panic in bug 575636
+	if ( get_dload_mode() || (cmd != NULL && cmd[0] != '\0') || in_panic)
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
 	else
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
@@ -276,26 +327,42 @@ static void msm_restart_prepare(const char *cmd)
 			__raw_writel(0x77665500, restart_reason);
 		} else if (!strncmp(cmd, "recovery", 8)) {
 			__raw_writel(0x77665502, restart_reason);
+		//gsh add start, add adb reboot dload command to run into download mode bug:547563
+		} else if (!strncmp(cmd, "dload", 5)) {
+			__raw_writel(0x77665543, restart_reason);
+		//gsh add end
 		} else if (!strncmp(cmd, "oem-", 4)) {
 			unsigned long code;
 			code = simple_strtoul(cmd + 4, NULL, 16) & 0xff;
 			__raw_writel(0x6f656d00 | code, restart_reason);
 		} else if (!strncmp(cmd, "edl", 3)) {
 			enable_emergency_dload_mode();
+        // add by xcb for power off alarm bug id 585101 begin
+		} else if (!strncmp(cmd, "rtc", 3)) {
+			__raw_writel(0x7766550C, restart_reason);
+        // add by xcb end
 		} else {
 			__raw_writel(0x77665501, restart_reason);
 		}
 	}
-
+    // add by xiaoyong.wu req from xb
+    if(in_panic && panic_download_mode)
+        __raw_writel(0x44554D50, restart_reason);
+    // add end
 	flush_cache_all();
 	outer_flush_all();
 }
 
+//// add by zhoujinggao from kernel git 2014-02-25
+void log_output_console( void );
 void msm_restart(char mode, const char *cmd)
 {
 	printk(KERN_NOTICE "Going down for restart now\n");
 
 	msm_restart_prepare(cmd);
+//// add by zhoujinggao from kernel git 2014-02-25
+	log_output_console();
+// add by zhoujinggao from kernel git 2014-02-25
 
 	if (!use_restart_v2()) {
 		__raw_writel(0, msm_tmr0_base + WDT0_EN);
@@ -344,11 +411,23 @@ static int __init msm_pmic_restart_init(void)
 }
 
 late_initcall(msm_pmic_restart_init);
+//add by xiaoyong.wu for dload switch
+#ifdef CONFIG_MSM_DLOAD_MODE
+static int __init msm_dload_mode_init(void)
+{
+	int ret;
+    ret = kobject_init_and_add(&kobj,&ktype,NULL,"dload_mode");
+	return ret;
+}
 
+late_initcall(msm_dload_mode_init);
+#endif
+//add end
 static int __init msm_restart_init(void)
 {
+    //modify by xiaoyong.wu for warmRestart when panic in bug 575636
+    atomic_notifier_chain_register(&panic_notifier_list, &panic_blk);
 #ifdef CONFIG_MSM_DLOAD_MODE
-	atomic_notifier_chain_register(&panic_notifier_list, &panic_blk);
 	dload_mode_addr = MSM_IMEM_BASE + DLOAD_MODE_ADDR;
 	emergency_dload_mode_addr = MSM_IMEM_BASE +
 		EMERGENCY_DLOAD_MODE_ADDR;

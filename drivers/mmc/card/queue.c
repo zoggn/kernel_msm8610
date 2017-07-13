@@ -22,6 +22,10 @@
 
 #define MMC_QUEUE_BOUNCESZ	65536
 
+//added by qian.zhou for sd card hot swap.2013.12.17
+struct scatterlist	cur_sg[8192];
+struct scatterlist	prev_sg[8192];
+//end add
 
 /*
  * Based on benchmark tests the default num of requests to trigger the write
@@ -354,14 +358,25 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 		blk_queue_max_segments(mq->queue, host->max_segs);
 		blk_queue_max_segment_size(mq->queue, host->max_seg_size);
 
-		mqrq_cur->sg = mmc_alloc_sg(host->max_segs, &ret);
-		if (ret)
-			goto cleanup_queue;
+		//modified by qian.zhou for sd card hot swap.2013.12.17
+		if (strncmp("mmc1", mmc_card_id(card), 4)) {
+			mqrq_cur->sg = mmc_alloc_sg(host->max_segs, &ret);
+			if (ret) {
+				goto cleanup_queue;
+			}
 
-
-		mqrq_prev->sg = mmc_alloc_sg(host->max_segs, &ret);
-		if (ret)
-			goto cleanup_queue;
+			mqrq_prev->sg = mmc_alloc_sg(host->max_segs, &ret);
+			if (ret) {
+				goto cleanup_queue;
+			}
+		} else {
+			sg_init_table(&cur_sg[0], host->max_segs);
+			mqrq_cur->sg = &cur_sg[0];
+			
+			sg_init_table(&prev_sg[0], host->max_segs);
+			mqrq_prev->sg = &prev_sg[0];
+		}
+		//end modify
 	}
 
 	sema_init(&mq->thread_sem, 1);
@@ -382,16 +397,26 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 	mqrq_prev->bounce_sg = NULL;
 
  cleanup_queue:
-	kfree(mqrq_cur->sg);
-	mqrq_cur->sg = NULL;
+ 	//modified by qian.zhou for sd card hot swap.2013.12.17
+//	kfree(mqrq_cur->sg);
+//	mqrq_cur->sg = NULL;
 	kfree(mqrq_cur->bounce_buf);
 	mqrq_cur->bounce_buf = NULL;
 
-	kfree(mqrq_prev->sg);
-	mqrq_prev->sg = NULL;
+//	kfree(mqrq_prev->sg);
+//	mqrq_prev->sg = NULL;
 	kfree(mqrq_prev->bounce_buf);
 	mqrq_prev->bounce_buf = NULL;
 
+	if (strncmp("mmc1", mmc_card_id(card), 4)) {		//don't free mmc0
+		kfree(mqrq_cur->sg);
+		mqrq_cur->sg = NULL;
+		
+		kfree(mqrq_prev->sg);
+		mqrq_prev->sg = NULL;
+	}
+	//end modify
+	
 	blk_cleanup_queue(mq->queue);
 	return ret;
 }
@@ -417,9 +442,9 @@ void mmc_cleanup_queue(struct mmc_queue *mq)
 
 	kfree(mqrq_cur->bounce_sg);
 	mqrq_cur->bounce_sg = NULL;
-
-	kfree(mqrq_cur->sg);
-	mqrq_cur->sg = NULL;
+	//modifed by qian.zhou for sd card hot swap.2013.12.17
+//	kfree(mqrq_cur->sg);
+//	mqrq_cur->sg = NULL;
 
 	kfree(mqrq_cur->bounce_buf);
 	mqrq_cur->bounce_buf = NULL;
@@ -427,11 +452,20 @@ void mmc_cleanup_queue(struct mmc_queue *mq)
 	kfree(mqrq_prev->bounce_sg);
 	mqrq_prev->bounce_sg = NULL;
 
-	kfree(mqrq_prev->sg);
-	mqrq_prev->sg = NULL;
+//	kfree(mqrq_prev->sg);
+//	mqrq_prev->sg = NULL;
 
 	kfree(mqrq_prev->bounce_buf);
 	mqrq_prev->bounce_buf = NULL;
+	
+	if (strncmp("mmc1", mmc_card_id(mq->card), 4)) {		//don't free mmc0
+		kfree(mqrq_cur->sg);
+		mqrq_cur->sg = NULL;
+		
+		kfree(mqrq_prev->sg);
+		mqrq_prev->sg = NULL;
+	}
+	//end modify
 
 	mq->card = NULL;
 }

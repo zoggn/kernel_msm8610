@@ -42,6 +42,7 @@ static irqreturn_t mmc_cd_gpio_irqt(int irq, void *dev_id)
 	struct mmc_host *host = dev_id;
 	struct mmc_cd_gpio *cd = host->hotplug.handler_priv;
 	int status;
+	unsigned int tct_timeout; //shenghua.gong add
 
 	status = mmc_cd_get_status(host);
 	if (unlikely(status < 0))
@@ -54,8 +55,16 @@ static irqreturn_t mmc_cd_gpio_irqt(int irq, void *dev_id)
 				"HIGH" : "LOW");
 		cd->status = status;
 
+		//shenghua.gong@tcl.com add start
+		if(status == 1)
+			tct_timeout = 2000; //sd card push in, delay time
+		else
+			tct_timeout = 100;  //sd card pull out, delay time 
+
+		//shenghua.gong@tcl.com add end
+	
 		/* Schedule a card detection after a debounce timeout */
-		mmc_detect_change(host, msecs_to_jiffies(100));
+		mmc_detect_change(host, msecs_to_jiffies(tct_timeout));
 	}
 out:
 	return IRQ_HANDLED;

@@ -53,7 +53,9 @@
 #include "spm.h"
 #include "pm.h"
 #include "modem_notifier.h"
-
+#ifdef CONFIG_ANDROID_PERSISTENT_RAM // add by wuxiaoyong for ram_console in bug 575636
+#include <linux/persistent_ram.h> 
+#endif
 static struct memtype_reserve msm8610_reserve_table[] __initdata = {
 	[MEMTYPE_SMI] = {
 	},
@@ -82,6 +84,27 @@ static struct of_dev_auxdata msm8610_auxdata_lookup[] __initdata = {
 	{}
 };
 
+//add by wuxiaoyong for ram_console in bug 575636
+#ifdef CONFIG_ANDROID_PERSISTENT_RAM
+static struct platform_device ram_console_device = {
+.name = "ram_console",
+.id = -1,
+};
+static struct persistent_ram_descriptor msm_prd[] __initdata = {
+{
+ .name = "ram_console",
+ .size = SZ_512K,
+},
+};
+
+static struct persistent_ram msm_pr __initdata = {
+ .descs = msm_prd,
+ .num_descs = ARRAY_SIZE(msm_prd),
+ .start = 0x19000000,
+ .size = SZ_512K
+};
+#endif
+//add end
 static struct reserve_info msm8610_reserve_info __initdata = {
 	.memtype_reserve_table = msm8610_reserve_table,
 	.paddr_to_memtype = msm8610_paddr_to_memtype,
@@ -95,6 +118,10 @@ static void __init msm8610_early_memory(void)
 
 static void __init msm8610_reserve(void)
 {
+    // add by wuxiaoyong ram_console in bug 575636
+#ifdef CONFIG_ANDROID_PERSISTENT_RAM
+    persistent_ram_early_init(&msm_pr); 
+#endif
 	reserve_info = &msm8610_reserve_info;
 	of_scan_flat_dt(dt_scan_for_memory_reserve, msm8610_reserve_table);
 	msm_reserve();
@@ -128,6 +155,10 @@ void __init msm8610_init(void)
 
 	msm8610_init_gpiomux();
 	board_dt_populate(adata);
+// add by wuxiaoyong  ram_console in bug 575636
+#ifdef CONFIG_ANDROID_PERSISTENT_RAM
+    platform_device_register(&ram_console_device);
+#endif
 	msm8610_add_drivers();
 }
 

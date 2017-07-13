@@ -36,7 +36,7 @@
 /*
  * Preprocessor Definitions and Constants
  */
-#define TZBSP_CPU_COUNT 0x02
+#define TZBSP_CPU_COUNT 4//add by jch for watchdog ramdump form 2 to 4
 /*
  * Number of VMID Tables
  */

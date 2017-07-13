@@ -656,6 +656,8 @@ static int rxrpc_create(struct net *net, struct socket *sock, int protocol,
 	return 0;
 }
 
+// sync moto-g code by zhoujinggao
+
 /*
  * RxRPC socket destructor
  */
@@ -670,7 +672,7 @@ static void rxrpc_sock_destructor(struct sock *sk)
 	WARN_ON(sk->sk_socket);
 
 	if (!sock_flag(sk, SOCK_DEAD)) {
-		WARN(1, "Attempt to release alive rxrpc socket: %p\n", sk);
+		printk("Attempt to release alive rxrpc socket: %p\n", sk);
 		return;
 	}
 }

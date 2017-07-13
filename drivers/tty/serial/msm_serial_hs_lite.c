@@ -1500,6 +1500,7 @@ static int msm_hsl_console_setup(struct console *co, char *options)
 
 	if (baud < 300 || baud > 115200)
 		baud = 115200;
+
 	msm_hsl_set_baud_rate(port, baud);
 
 	ret = uart_set_options(port, co, baud, parity, bits, flow);

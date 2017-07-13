@@ -332,6 +332,10 @@ enum vdd_io_level {
 	VDD_IO_SET_LEVEL,
 };
 
+//shenghua.gong@tcl.com read board id add start
+uint32_t socinfo_get_hw_version(void);
+//shenghua.gong@tcl.com read board id add end
+
 /* MSM platform specific tuning */
 static inline int msm_dll_poll_ck_out_en(struct sdhci_host *host,
 						u8 poll)
@@ -1341,6 +1345,14 @@ static struct sdhci_msm_pltfm_data *sdhci_msm_populate_pdata(struct device *dev)
 	int len, i;
 	int clk_table_len;
 	u32 *clk_table = NULL;
+      //add by chenghui.jia for sdcard hot-plug
+	int ret = 0;
+        //delete for PIO GPIO modify from 94 to 42
+	//struct regulator *cdpin;
+	//end add by chenghui.jia
+
+	int board_num; //shenghua.gong@tcl read board id
+		
 	enum of_gpio_flags flags = OF_GPIO_ACTIVE_LOW;
 
 	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
@@ -1352,7 +1364,22 @@ static struct sdhci_msm_pltfm_data *sdhci_msm_populate_pdata(struct device *dev)
 	pdata->status_gpio = of_get_named_gpio_flags(np, "cd-gpios", 0, &flags);
 	if (gpio_is_valid(pdata->status_gpio) & !(flags & OF_GPIO_ACTIVE_LOW))
 		pdata->caps2 |= MMC_CAP2_CD_ACTIVE_HIGH;
-
+//add by chenghui.jia for sdcard hot-plug
+   //delete for PIO GPIO modify from 94 to 42
+   /*
+       cdpin = regulator_get(dev, "cdpin");	
+	if (!IS_ERR(cdpin)) {
+		ret = regulator_enable(cdpin);
+		if (ret)
+			pr_info("JCH: cdpin-regulator could not enable  !\n");
+	}
+   */   
+      if (gpio_is_valid(pdata->status_gpio))
+              ret = gpio_tlmm_config(GPIO_CFG(pdata->status_gpio, 0, GPIO_CFG_INPUT,GPIO_CFG_PULL_UP, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
+       if (ret) {
+			pr_info("JCH: gpio-%d could not configure  !\n" , pdata->status_gpio);			
+	}
+//end add by chenghui.jia
 	of_property_read_u32(np, "qcom,bus-width", &bus_width);
 	if (bus_width == 8)
 		pdata->mmc_bus_width = MMC_CAP_8_BIT_DATA;
@@ -1429,6 +1456,24 @@ static struct sdhci_msm_pltfm_data *sdhci_msm_populate_pdata(struct device *dev)
 			pdata->caps |= MMC_CAP_1_2V_DDR
 						| MMC_CAP_UHS_DDR50;
 	}
+
+	//shenghua.gong@tcl.com read board id add start
+	board_num = socinfo_get_hw_version();
+	if(!board_num)
+	{
+		pr_err("%s:%d get_board_info failed\n", __func__, __LINE__);
+		//return 0;
+	}else
+	{
+		if (board_num>=900&&board_num<1700)
+		{
+			printk("%s:%d get_board_info DUAL_SIM\n", __func__, __LINE__);
+			pdata->caps |= MMC_CAP_1_8V_DDR
+						| MMC_CAP_UHS_DDR50;
+		}
+		
+	}
+	//shenghua.gong@tcl.com read board id add end
 
 	if (of_get_property(np, "qcom,nonremovable", NULL))
 		pdata->nonremovable = true;
@@ -2910,7 +2955,6 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 	} else {
 		dev_err(&pdev->dev, "%s: Failed to set dma mask\n", __func__);
 	}
-
 	ret = sdhci_add_host(host);
 	if (ret) {
 		dev_err(&pdev->dev, "Add host failed (%d)\n", ret);

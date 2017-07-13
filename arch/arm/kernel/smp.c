@@ -609,8 +609,9 @@ void smp_send_all_cpu_backtrace(void)
 	if (!cpus_empty(backtrace_mask))
 		smp_cross_call(&backtrace_mask, IPI_CPU_BACKTRACE);
 
-	/* Wait for up to 10 seconds for all other CPUs to do the backtrace */
-	for (i = 0; i < 10 * 1000; i++) {
+	/* Wait for up to 5 seconds for all other CPUs to do the backtrace */
+	/*modify 10s to 5s by xiaoyong.wu for watchdog timeout*/
+	for (i = 0; i < 5 * 1000; i++) {
 		if (cpumask_empty(&backtrace_mask))
 			break;
 		mdelay(1);

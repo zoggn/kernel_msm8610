@@ -34,23 +34,29 @@ static struct gpiomux_setting gpio_i2c_config = {
 	.drv  = GPIOMUX_DRV_2MA,
 	.pull = GPIOMUX_PULL_NONE,
 };
-
+//Begin-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
+static struct gpiomux_setting gpio_i2c2_config = {
+	.func = GPIOMUX_FUNC_5,
+	.drv  = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_NONE,
+};
+//End-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
 static struct gpiomux_setting gpio_cam_i2c_config = {
 	.func = GPIOMUX_FUNC_1,
 	.drv  = GPIOMUX_DRV_2MA,
 	.pull = GPIOMUX_PULL_NONE,
 };
 
-static struct gpiomux_setting gpio_nfc_config = {
-	.func = GPIOMUX_FUNC_2,
-	.drv  = GPIOMUX_DRV_2MA,
-	.pull = GPIOMUX_PULL_NONE,
-};
-static struct gpiomux_setting gpio_nfc_sus_config = {
-	.func = GPIOMUX_FUNC_2,
-	.drv  = GPIOMUX_DRV_2MA,
-	.pull = GPIOMUX_PULL_DOWN,
-};
+//static struct gpiomux_setting gpio_nfc_config = {
+//	.func = GPIOMUX_FUNC_2,
+//	.drv  = GPIOMUX_DRV_2MA,
+//	.pull = GPIOMUX_PULL_NONE,
+//};
+//static struct gpiomux_setting gpio_nfc_sus_config = {
+//	.func = GPIOMUX_FUNC_2,
+//	.drv  = GPIOMUX_DRV_2MA,
+//	.pull = GPIOMUX_PULL_DOWN,
+//};
 
 static struct gpiomux_setting atmel_int_act_cfg = {
 	.func = GPIOMUX_FUNC_GPIO,
@@ -215,6 +221,22 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,
 		},
 	},
+//Begin-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
+    {
+        .gpio = 8, /* BLSP1 QUP2 I2C_SDA */
+        .settings = {
+            [GPIOMUX_ACTIVE] = &gpio_i2c2_config,
+            [GPIOMUX_SUSPENDED] = &gpio_i2c2_config,
+        },
+    },
+    {
+        .gpio = 9, /* BLSP1 QUP2 I2C_SCL */
+        .settings = {
+            [GPIOMUX_ACTIVE] = &gpio_i2c2_config,
+            [GPIOMUX_SUSPENDED] = &gpio_i2c2_config,
+        },
+    },
+//End-[Bug 540542]BSP porting LED FLASH by weicai.long@tcl.com, 2013/10/24.
 	{
 		.gpio      = 10,	/* BLSP1 QUP3 I2C_SDA */
 		.settings = {
@@ -243,13 +265,13 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &gpio_cam_i2c_config,
 		},
 	},
-	{
-		.gpio      = 78,	/* NFC CLK */
-		.settings = {
-			[GPIOMUX_ACTIVE] = &gpio_nfc_config,
-			[GPIOMUX_SUSPENDED] = &gpio_nfc_sus_config,
-		},
-	},
+//	{
+//		.gpio      = 78,	/* NFC CLK */
+//		.settings = {
+//			[GPIOMUX_ACTIVE] = &gpio_nfc_config,
+//			[GPIOMUX_SUSPENDED] = &gpio_nfc_sus_config,
+//		},
+//	},
 };
 
 static struct gpiomux_setting gpio_i2c_nfc_pvt_config = {
@@ -505,7 +527,7 @@ static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 		},
 	},
 	{
-		.gpio = 8, /* CAM1_STANDBY_N */
+		.gpio = 85, /* CAM1_STANDBY_N */
 		.settings = {
 			[GPIOMUX_ACTIVE]    = &cam_settings[3],
 			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[1],
@@ -532,6 +554,24 @@ static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[1],
 		},
 	},
+//Begin add by weicai.long@tcl.com for camera VANA power, 2013/11/5.
+    {
+        .gpio = 43, /* VANA 2.8v power en */
+        .settings = {
+            [GPIOMUX_ACTIVE]    = &cam_settings[3],
+            [GPIOMUX_SUSPENDED] = &gpio_suspend_config[1],
+        },
+    },
+//End add by weicai.long@tcl.com for camera VANA power, 2013/11/5.
+//Begin add by weicai.long@tcl.com for camera AF_PWN, 2013/11/15.
+	{
+		.gpio = 78, /* CAM1_AF_PWN */
+		.settings = {
+			[GPIOMUX_ACTIVE]    = &cam_settings[3],
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[1],
+		},
+	},
+//End add by weicai.long@tcl.com for camera AF_PWN, 2013/11/15.
 };
 
 static struct msm_gpiomux_config msm_keypad_configs[] __initdata = {

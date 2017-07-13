@@ -85,6 +85,7 @@ enum qpnp_vadc_channels {
 	AMUX_PU1,
 	AMUX_PU2,
 	LR_MUX3_BUF_XO_THERM_BUF,
+	LR_MUX1_BATT_THERM_VOLTAGE, //add by shicuiping for therm adc voltage
 	LR_MUX1_PU1_BAT_THERM = 112,
 	LR_MUX2_PU1_BAT_ID = 113,
 	LR_MUX3_PU1_XO_THERM = 114,
@@ -231,6 +232,7 @@ enum qpnp_adc_scale_fn_type {
 	SCALE_THERM_150K_PULLUP,
 	SCALE_QRD_BATT_THERM,
 	SCALE_QRD_SKUAA_BATT_THERM,
+	SCALE_BATT_THERM_VOLTAGE, //add by shicuiping for therm adc voltage
 	SCALE_NONE,
 };
 
@@ -1134,6 +1136,14 @@ int32_t qpnp_adc_scale_qrd_skuaa_batt_therm(struct qpnp_vadc_chip *dev,
 			const struct qpnp_adc_properties *adc_prop,
 			const struct qpnp_vadc_chan_properties *chan_prop,
 			struct qpnp_vadc_result *chan_rslt);
+//add by shicuiping for therm adc voltage start
+int32_t qpnp_adc_scale_batt_therm_voltage(struct qpnp_vadc_chip *dev,
+			int32_t adc_code,
+			const struct qpnp_adc_properties *adc_prop,
+			const struct qpnp_vadc_chan_properties *chan_prop,
+			struct qpnp_vadc_result *chan_rslt);
+//add by shicuiping for therm adc voltage stop
+
 /**
  * qpnp_adc_scale_batt_id() - Scales the pre-calibrated digital output
  *		of an ADC to the ADC reference and compensates for the

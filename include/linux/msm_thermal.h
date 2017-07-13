@@ -18,6 +18,7 @@ struct msm_thermal_data {
 	uint32_t sensor_id;
 	uint32_t poll_ms;
 	int32_t limit_temp_degC;
+	int32_t limit_temp_degC_default; // [PLATFORM]-Add by TCTSZ.cuiping.shi, for cpu thermal, 2014/03/31
 	int32_t temp_hysteresis_degC;
 	uint32_t freq_step;
 	uint32_t freq_control_mask;

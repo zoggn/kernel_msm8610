@@ -177,8 +177,13 @@ static int mdp3_ctrl_vsync_enable(struct msm_fb_data_type *mfd, int enable)
 	 * Need to fake vsync whenever dsi interface is not
 	 * active or when dsi clocks are currently off
 	 */
+	// Modified by Xiaodong.Chen at 2014.1.23 for resolve about lcd resume too slow
+	// if (enable && mdp3_session->status == 1
+	// 		&& mdp3_session->vsync_before_commit) {
 	if (enable && mdp3_session->status == 1
-			&& mdp3_session->vsync_before_commit) {
+		&& (mdp3_session->vsync_before_commit
+			|| !mdp3_session->intf->active)) {
+	// Modified end
 		mod_timer(&mdp3_session->vsync_timer,
 			jiffies + msecs_to_jiffies(mdp3_session->vsync_period));
 	} else if (enable && !mdp3_session->clk_on) {
@@ -194,7 +199,11 @@ static int mdp3_ctrl_vsync_enable(struct msm_fb_data_type *mfd, int enable)
 void mdp3_vsync_timer_func(unsigned long arg)
 {
 	struct mdp3_session_data *session = (struct mdp3_session_data *)arg;
-	if (session->status == 1 && session->vsync_before_commit) {
+	// Modified by Xiaodong.Chen at 2014.1.23 for resolve about lcd resume too slow
+	// if (session->status == 1 && session->vsync_before_commit) {
+	if (session->status == 1
+		&& (session->vsync_before_commit || !session->intf->active)) {
+	// Modified end
 		pr_debug("mdp3_vsync_timer_func trigger\n");
 		vsync_notify_handler(session);
 		mod_timer(&session->vsync_timer,
@@ -208,16 +217,35 @@ static int mdp3_ctrl_async_blit_req(struct msm_fb_data_type *mfd,
 	struct mdp_async_blit_req_list req_list_header;
 	int rc, count;
 	void __user *p_req;
+	struct mdp3_session_data *mdp3_session;
 
-	if (copy_from_user(&req_list_header, p, sizeof(req_list_header)))
-		return -EFAULT;
+	mdp3_session = (struct mdp3_session_data *)mfd->mdp.private1;
+
+	mutex_lock(&mdp3_session->display_lock);
+
+	if (!mdp3_session->status) {
+		pr_err("display is off already\n");
+		rc = -EPERM;
+		goto async_blit_req_err;
+	}
+
+	if (copy_from_user(&req_list_header, p, sizeof(req_list_header))) {
+		rc = -EFAULT;
+		goto async_blit_req_err;
+	}
+
 	p_req = p + sizeof(req_list_header);
 	count = req_list_header.count;
-	if (count < 0 || count >= MAX_BLIT_REQ)
-		return -EINVAL;
+	if (count < 0 || count >= MAX_BLIT_REQ) {
+		rc = -EINVAL;
+		goto async_blit_req_err;
+	}
 	rc = mdp3_ppp_parse_req(p_req, &req_list_header, 1);
 	if (!rc)
 		rc = copy_to_user(p, &req_list_header, sizeof(req_list_header));
+
+async_blit_req_err:
+	mutex_unlock(&mdp3_session->display_lock);
 	return rc;
 }
 
@@ -226,16 +254,35 @@ static int mdp3_ctrl_blit_req(struct msm_fb_data_type *mfd, void __user *p)
 	struct mdp_async_blit_req_list req_list_header;
 	int rc, count;
 	void __user *p_req;
+	struct mdp3_session_data *mdp3_session;
+
+	mdp3_session = (struct mdp3_session_data *)mfd->mdp.private1;
+
+	mutex_lock(&mdp3_session->display_lock);
+
+	if (!mdp3_session->status) {
+		pr_err("display is off already\n");
+		rc = -EPERM;
+		goto blit_req_err;
+	}
 
 	if (copy_from_user(&(req_list_header.count), p,
-			sizeof(struct mdp_blit_req_list)))
-		return -EFAULT;
+			sizeof(struct mdp_blit_req_list))) {
+		rc = -EFAULT;
+		goto blit_req_err;
+	}
 	p_req = p + sizeof(struct mdp_blit_req_list);
 	count = req_list_header.count;
-	if (count < 0 || count >= MAX_BLIT_REQ)
-		return -EINVAL;
+	if (count < 0 || count >= MAX_BLIT_REQ) {
+		rc = -EINVAL;
+		goto blit_req_err;
+	}
 	req_list_header.sync.acq_fen_fd_cnt = 0;
 	rc = mdp3_ppp_parse_req(p_req, &req_list_header, 0);
+
+blit_req_err:
+	mutex_unlock(&mdp3_session->display_lock);
+
 	return rc;
 }
 
@@ -365,11 +412,11 @@ static int mdp3_ctrl_get_intf_type(struct msm_fb_data_type *mfd)
 	}
 	return type;
 }
-
-static int mdp3_ctrl_get_source_format(struct msm_fb_data_type *mfd)
+//mingquan.lai merge Qualcomm patch to fix TZ cracsh
+static int mdp3_ctrl_get_source_format(u32 imgType)
 {
 	int format;
-	switch (mfd->fb_imgType) {
+	switch (imgType) {
 	case MDP_RGB_565:
 		format = MDP3_DMA_IBUF_FORMAT_RGB565;
 		break;
@@ -474,7 +521,7 @@ static int mdp3_ctrl_dma_init(struct msm_fb_data_type *mfd,
 	fix = &fbi->fix;
 	var = &fbi->var;
 
-	sourceConfig.format = mdp3_ctrl_get_source_format(mfd);
+	sourceConfig.format = mdp3_ctrl_get_source_format(mfd->fb_imgType);		//mingquan.lai merge Qualcomm patch to fix TZ cracsh
 	sourceConfig.width = panel_info->xres;
 	sourceConfig.height = panel_info->yres;
 	sourceConfig.x = 0;
@@ -515,6 +562,8 @@ static int mdp3_ctrl_on(struct msm_fb_data_type *mfd)
 		pr_err("mdp3_ctrl_on no device");
 		return -ENODEV;
 	}
+
+	mutex_lock(&mdp3_session->display_lock);
 	mutex_lock(&mdp3_session->lock);
 	if (mdp3_session->status) {
 		pr_debug("fb%d is on already", mfd->index);
@@ -585,12 +634,14 @@ static int mdp3_ctrl_on(struct msm_fb_data_type *mfd)
 		}
 	} else {
 		mdp3_session->first_commit = true;
+		mdp3_reset_ppp();
 	}
 
 on_error:
 	if (!rc)
 		mdp3_session->status = 1;
 	mutex_unlock(&mdp3_session->lock);
+	mutex_unlock(&mdp3_session->display_lock);
 	return rc;
 }
 
@@ -609,12 +660,18 @@ static int mdp3_ctrl_off(struct msm_fb_data_type *mfd)
 	}
 
 	panel = mdp3_session->panel;
+
+	mutex_lock(&mdp3_session->display_lock);
 	mutex_lock(&mdp3_session->lock);
 
 	if (!mdp3_session->status) {
 		pr_debug("fb%d is off already", mfd->index);
 		goto off_error;
 	}
+
+	rc = mdp3_acquire_ppp();
+	if (rc)
+		pr_err("ppp still in progress, wait time out\n");
 
 	mdp3_ctrl_clk_enable(mfd, 1);
 
@@ -662,9 +719,17 @@ static int mdp3_ctrl_off(struct msm_fb_data_type *mfd)
 off_error:
 	mdp3_session->status = 0;
 	mdp3_bufq_deinit(&mdp3_session->bufq_out);
-	mutex_unlock(&mdp3_session->lock);
+	//mingquan.lai merge Qualcomm patch to fix TZ cracsh
+	//zrl modify
 	if (mdp3_session->overlay.id != MSMFB_NEW_REQUEST)
-		mdp3_overlay_unset(mfd, mdp3_session->overlay.id);
+		mdp3_session->overlay.id = MSMFB_NEW_REQUEST;
+		mdp3_bufq_deinit(&mdp3_session->bufq_in);
+	
+	mutex_unlock(&mdp3_session->lock);
+	//if (mdp3_session->overlay.id != MSMFB_NEW_REQUEST)
+		//mdp3_overlay_unset(mfd, mdp3_session->overlay.id);		//mingquan.lai merge Qualcomm patch to fix TZ cracsh
+	//zrl end
+	mutex_unlock(&mdp3_session->display_lock);
 	return 0;
 }
 
@@ -686,6 +751,7 @@ static int mdp3_ctrl_reset_cmd(struct msm_fb_data_type *mfd)
 
 	panel = mdp3_session->panel;
 	mdp3_dma = mdp3_session->dma;
+	mutex_lock(&mdp3_session->display_lock);
 	mutex_lock(&mdp3_session->lock);
 
 	vsync_client = mdp3_dma->vsync_client;
@@ -715,6 +781,7 @@ static int mdp3_ctrl_reset_cmd(struct msm_fb_data_type *mfd)
 
 reset_error:
 	mutex_unlock(&mdp3_session->lock);
+	mutex_unlock(&mdp3_session->display_lock);
 	return rc;
 }
 
@@ -741,6 +808,7 @@ static int mdp3_ctrl_reset(struct msm_fb_data_type *mfd)
 
 	panel = mdp3_session->panel;
 	mdp3_dma = mdp3_session->dma;
+	mutex_lock(&mdp3_session->display_lock);
 	mutex_lock(&mdp3_session->lock);
 
 	vsync_client = mdp3_dma->vsync_client;
@@ -806,6 +874,7 @@ static int mdp3_ctrl_reset(struct msm_fb_data_type *mfd)
 
 reset_error:
 	mutex_unlock(&mdp3_session->lock);
+	mutex_unlock(&mdp3_session->display_lock);
 	return rc;
 }
 
@@ -826,20 +895,21 @@ static int mdp3_overlay_get(struct msm_fb_data_type *mfd,
 
 	return rc;
 }
-
+//mingquan.lai merge Qualcomm patch to fix TZ cracsh
 static int mdp3_overlay_set(struct msm_fb_data_type *mfd,
 				struct mdp_overlay *req)
 {
 	int rc = 0;
 	struct mdp3_session_data *mdp3_session = mfd->mdp.private1;
-	struct fb_var_screeninfo *var;
+	struct mdp3_dma *dma = mdp3_session->dma;
 	struct fb_fix_screeninfo *fix;
 	struct fb_info *fbi = mfd->fbi;
 	int stride;
+	int format;
 
 	fix = &fbi->fix;
-	var = &fbi->var;
-	stride = req->src.width * var->bits_per_pixel/8;
+	stride = req->src.width * ppp_bpp(req->src.format);
+	format = mdp3_ctrl_get_source_format(req->src.format);
 
 	mutex_lock(&mdp3_session->lock);
 
@@ -848,9 +918,20 @@ static int mdp3_overlay_set(struct msm_fb_data_type *mfd,
 
 	mdp3_session->overlay = *req;
 	if (req->id == MSMFB_NEW_REQUEST) {
+	//	if (dma->source_config.stride != stride )
 		if (fix->line_length != stride)
-			mdp3_session->dma->config_stride(
-						mdp3_session->dma, stride);
+		/*||
+				dma->source_config.width != req->src.width ||
+				dma->source_config.height != req->src.height ||
+				dma->source_config.format != format)*/ {
+			dma->source_config.width = req->src.width;
+			dma->source_config.height = req->src.height,
+			dma->source_config.format = format;
+			dma->source_config.stride = stride;
+			mdp3_clk_enable(1, 0);
+			mdp3_session->dma->dma_config_source(dma);
+			mdp3_clk_enable(0, 0);
+		}
 		mdp3_session->overlay.id = 1;
 		req->id = 1;
 	}
@@ -859,20 +940,29 @@ static int mdp3_overlay_set(struct msm_fb_data_type *mfd,
 
 	return rc;
 }
-
+//mingquan.lai merge Qualcomm patch to fix TZ cracsh
 static int mdp3_overlay_unset(struct msm_fb_data_type *mfd, int ndx)
 {
 	int rc = 0;
 	struct mdp3_session_data *mdp3_session = mfd->mdp.private1;
 	struct fb_info *fbi = mfd->fbi;
 	struct fb_fix_screeninfo *fix;
+	struct mdss_panel_info *panel_info = mfd->panel_info;
+	int format;
 
 	fix = &fbi->fix;
+	format = mdp3_ctrl_get_source_format(mfd->fb_imgType);
 	mutex_lock(&mdp3_session->lock);
 
 	if (mdp3_session->overlay.id == ndx && ndx == 1) {
-		mdp3_session->dma->config_stride(mdp3_session->dma,
-							fix->line_length);
+		struct mdp3_dma *dma = mdp3_session->dma;
+		dma->source_config.width = panel_info->xres,
+		dma->source_config.height = panel_info->yres,
+		dma->source_config.format = format;
+		dma->source_config.stride = fix->line_length;
+		mdp3_clk_enable(1, 0);
+		mdp3_session->dma->dma_config_source(dma);
+		mdp3_clk_enable(0, 0);
 		mdp3_session->overlay.id = MSMFB_NEW_REQUEST;
 		mdp3_bufq_deinit(&mdp3_session->bufq_in);
 	} else {
@@ -1367,6 +1457,13 @@ static int mdp3_pp_ioctl(struct msm_fb_data_type *mfd,
 	if (ret)
 		return ret;
 
+	mutex_lock(&mdp3_session->display_lock);
+	if (!mdp3_session->status) {
+		pr_err("display is off\n");
+		mutex_unlock(&mdp3_session->display_lock);
+		return -EPERM;
+	}
+
 	switch (mdp_pp.op) {
 	case mdp_bl_scale_cfg:
 		ret = mdp3_validate_scale_config(&mdp_pp.data.bl_scale_data);
@@ -1394,6 +1491,8 @@ static int mdp3_pp_ioctl(struct msm_fb_data_type *mfd,
 	}
 	if (!ret)
 		ret = copy_to_user(argp, &mdp_pp, sizeof(struct msmfb_mdp_pp));
+
+	mutex_unlock(&mdp3_session->display_lock);
 	return ret;
 }
 
@@ -1410,6 +1509,13 @@ static int mdp3_histo_ioctl(struct msm_fb_data_type *mfd, u32 cmd,
 		return -EINVAL;
 
 	mdp3_session = mfd->mdp.private1;
+
+	mutex_lock(&mdp3_session->display_lock);
+	if (!mdp3_session->status) {
+		pr_err("display is off\n");
+		mutex_unlock(&mdp3_session->display_lock);
+		return -EPERM;
+	}
 
 	switch (cmd) {
 	case MSMFB_HISTOGRAM_START:
@@ -1440,6 +1546,8 @@ static int mdp3_histo_ioctl(struct msm_fb_data_type *mfd, u32 cmd,
 	default:
 		break;
 	}
+
+	mutex_unlock(&mdp3_session->display_lock);
 	return ret;
 }
 
@@ -1627,6 +1735,7 @@ int mdp3_ctrl_init(struct msm_fb_data_type *mfd)
 	}
 	memset(mdp3_session, 0, sizeof(struct mdp3_session_data));
 	mutex_init(&mdp3_session->lock);
+	mutex_init(&mdp3_session->display_lock);
 	INIT_WORK(&mdp3_session->clk_off_work, mdp3_dispatch_clk_off);
 	atomic_set(&mdp3_session->vsync_countdown, 0);
 	mutex_init(&mdp3_session->histo_lock);
@@ -1691,15 +1800,16 @@ int mdp3_ctrl_init(struct msm_fb_data_type *mfd)
 	kobject_uevent(&dev->kobj, KOBJ_ADD);
 	pr_debug("vsync kobject_uevent(KOBJ_ADD)\n");
 
+	if (mdp3_get_cont_spash_en())
+		mdp3_session->clk_on = 1;
+
 	if (splash_mismatch) {
 		pr_err("splash memory mismatch, stop splash\n");
 		mdp3_ctrl_off(mfd);
 	}
 
-	if (mdp3_get_cont_spash_en())
-		mdp3_session->clk_on = 1;
-
 	mdp3_session->vsync_before_commit = true;
+	mdp3_reset_ppp();
 init_done:
 	if (IS_ERR_VALUE(rc))
 		kfree(mdp3_session);

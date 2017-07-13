@@ -26,12 +26,23 @@
 
 #define DATA_LENGTH_UINT    512
 #define CMD_HEAD_LENGTH     (sizeof(st_cmd_head) - sizeof(u8 *))
-static char procname[20] = {0};
-
+//static char procname[20] = {0};
+#define GOODIX_ENTRY_NAME   "goodix_tool"
 #define UPDATE_FUNCTIONS
 
+#ifdef UPDATE_FUNCTIONS
+/*ADD-BEGIN--- modify the error when using this two function---by qifu.cheng case 610148--- 14/02/26*/
+extern s32 gup_enter_update_mode(struct i2c_client *client, struct  goodix_ts_platform_data *pdata);
+extern void gup_leave_update_mode(struct goodix_ts_data *ts);
+/*ADD-END--- modify the error when using this two function---by qifu.cheng case 610148--- 14/02/26*/
+extern s32 gup_update_proc(void *dir);
+#endif
+
+extern void gtp_irq_disable(struct goodix_ts_data *);
+extern void gtp_irq_enable(struct goodix_ts_data *);
+
 #pragma pack(1)
-struct {
+typedef struct {
 	u8  wr;		/* write read flag£¬0:R  1:W  2:PID 3: */
 	u8  flag;	/* 0:no need flag/int 1: need flag  2:need int */
 	u8 flag_addr[2];/* flag address */
@@ -63,9 +74,12 @@ static s32 goodix_tool_read(char *page, char **start, off_t off, int count,
 static s32 (*tool_i2c_read)(u8 *, u16);
 static s32 (*tool_i2c_write)(u8 *, u16);
 
-s32 DATA_LENGTH;
+#if GTP_ESD_PROTECT
+extern void gtp_esd_switch(struct i2c_client *, s32);
+#endif
+s32 DATA_LENGTH = 0;
 s8 IC_TYPE[16] = {0};
-
+#if 0
 static void tool_set_proc_name(char *procname)
 {
 	char *months[12] = {"Jan", "Feb", "Mar", "Apr", "May",
@@ -89,7 +103,7 @@ static void tool_set_proc_name(char *procname)
 	snprintf(procname, 20, "gmnode%04d%02d%02d", n_year, n_month, n_day);
 	/* GTP_DEBUG("procname = %s", procname); */
 }
-
+#endif
 static s32 tool_i2c_read_no_extra(u8 *buf, u16 len)
 {
 	s32 ret = -1;
@@ -218,15 +232,16 @@ s32 init_wr_node(struct i2c_client *client)
 	register_i2c_func();
 
 	mutex_init(&lock);
-	tool_set_proc_name(procname);
-	goodix_proc_entry = create_proc_entry(procname, 0660, NULL);
+//	tool_set_proc_name(procname);
+//	goodix_proc_entry = create_proc_entry(procname, 0660, NULL);
+    goodix_proc_entry = create_proc_entry(GOODIX_ENTRY_NAME, 0666, NULL);
 	if (goodix_proc_entry == NULL) {
 		GTP_ERROR("Couldn't create proc entry!");
 		return FAIL;
 	} else {
 		GTP_INFO("Create proc entry success!");
 		goodix_proc_entry->write_proc = goodix_tool_write;
-		dix_proc_entry->read_proc = goodix_tool_read;
+		goodix_proc_entry->read_proc = goodix_tool_read;
 	}
 
 	return SUCCESS;
@@ -237,7 +252,8 @@ void uninit_wr_node(void)
 	kfree(cmd_head.data);
 	cmd_head.data = NULL;
 	unregister_i2c_func();
-	remove_proc_entry(procname, NULL);
+	//remove_proc_entry(procname, NULL);
+	remove_proc_entry(GOODIX_ENTRY_NAME, NULL);
 }
 
 static u8 relation(u8 src, u8 dst, u8 rlt)
@@ -335,6 +351,9 @@ static s32 goodix_tool_write(struct file *filp, const char __user *buff,
 						unsigned long len, void *data)
 {
 	s32 ret = 0;
+/*ADD-BEGIN--- modify the error when using this two function---by qifu.cheng case 610148--- 14/02/26*/	
+	struct goodix_ts_data *ts = i2c_get_clientdata(gt_client);
+/*ADD-END--- modify the error when using this two function---by qifu.cheng case 610148--- 14/02/26*/	
 	GTP_DEBUG_FUNC();
 	GTP_DEBUG_ARRAY((u8 *)buff, len);
 
@@ -458,7 +477,9 @@ static s32 goodix_tool_write(struct file *filp, const char __user *buff,
 		ret = CMD_HEAD_LENGTH;
 		goto exit;
 	} else if (cmd_head.wr == 17) {
-		struct goodix_ts_data *ts = i2c_get_clientdata(gt_client);
+/*ADD-BEGIN--- modify the error when using this two function---by qifu.cheng 610148--- 14/02/26*/	
+		//struct goodix_ts_data *ts = i2c_get_clientdata(gt_client);
+/*ADD-END--- modify the error when using this two function---by qifu.cheng case 610148--- 14/02/26*/		
 		ret = copy_from_user(&cmd_head.data[GTP_ADDR_LENGTH],
 				&buff[CMD_HEAD_LENGTH], cmd_head.data_len);
 		if (ret)
@@ -475,12 +496,12 @@ static s32 goodix_tool_write(struct file *filp, const char __user *buff,
 	}
 #ifdef UPDATE_FUNCTIONS
 	else if (cmd_head.wr == 11) { /* Enter update mode! */
-		if (FAIL == gup_enter_update_mode(gt_client)) {
+		if (FAIL == gup_enter_update_mode(gt_client,ts->pdata)) {/*--- modify the error when using this two function---by qifu.cheng --- 14/02/26*/
 			ret = -EBUSY;
 			goto exit;
 		}
 	} else if (cmd_head.wr == 13) { /* Leave update mode! */
-		gup_leave_update_mode();
+		gup_leave_update_mode(i2c_get_clientdata(gt_client));/*--- modify the error when using this two function---by qifu.cheng --- 14/02/26*/
 	} else if (cmd_head.wr == 15) { /* Update firmware! */
 		show_len = 0;
 		total_len = 0;

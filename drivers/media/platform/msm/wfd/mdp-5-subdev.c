@@ -208,6 +208,7 @@ static int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 		return -EINVAL;
 	}
 
+	msm_fb_writeback_iommu_ref(inst->mdp, true);  //mingquan.lai fix watch dog AP carsh 
 	if (inst->secure) {
 		rc = msm_ion_secure_buffer(mmap->ion_client,
 			mregion->ion_handle, VIDEO_PIXEL, 0);
@@ -231,12 +232,15 @@ static int mdp_mmap(struct v4l2_subdev *sd, void *arg)
 				!inst->secure ? "non" : "", rc);
 		goto iommu_fail;
 	}
+	msm_fb_writeback_iommu_ref(inst->mdp, false);	//mingquan.lai fix watch dog AP carsh 
 
 	return 0;
 iommu_fail:
 	if (inst->secure)
 		msm_ion_unsecure_buffer(mmap->ion_client, mregion->ion_handle);
 secure_fail:
+	msm_fb_writeback_iommu_ref(inst->mdp, false);	//mingquan.lai fix watch dog AP carsh 
+
 	return rc;
 }
 
@@ -255,6 +259,7 @@ static int mdp_munmap(struct v4l2_subdev *sd, void *arg)
 	inst = mmap->cookie;
 	mregion = mmap->mregion;
 
+	msm_fb_writeback_iommu_ref(inst->mdp, true);		//mingquan.lai fix watch dog AP carsh 
 	domain = msm_fb_get_iommu_domain(inst->mdp,
 			inst->secure ? MDP_IOMMU_DOMAIN_CP :
 					MDP_IOMMU_DOMAIN_NS);
@@ -264,6 +269,7 @@ static int mdp_munmap(struct v4l2_subdev *sd, void *arg)
 
 	if (inst->secure)
 		msm_ion_unsecure_buffer(mmap->ion_client, mregion->ion_handle);
+	msm_fb_writeback_iommu_ref(inst->mdp, false);		//mingquan.lai fix watch dog AP carsh 
 
 	return 0;
 }

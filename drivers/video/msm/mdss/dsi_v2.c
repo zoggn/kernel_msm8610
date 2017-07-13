@@ -26,7 +26,7 @@ static int dsi_off(struct mdss_panel_data *pdata)
 {
 	int rc = 0;
 
-	pr_debug("turn off dsi controller\n");
+	pr_info("turn off dsi controller\n");
 	if (dsi_intf.off)
 		rc = dsi_intf.off(pdata);
 
@@ -41,7 +41,7 @@ static int dsi_on(struct mdss_panel_data *pdata)
 {
 	int rc = 0;
 
-	pr_debug("dsi_on DSI controller on\n");
+	pr_info("dsi_on DSI controller on\n");
 	if (dsi_intf.on)
 		rc = dsi_intf.on(pdata);
 
@@ -57,7 +57,7 @@ static int dsi_panel_handler(struct mdss_panel_data *pdata, int enable)
 	int rc = 0;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 
-	pr_debug("dsi_panel_handler enable=%d\n", enable);
+	pr_info("dsi_panel_handler enable=%d\n", enable);
 	if (!pdata)
 		return -ENODEV;
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
@@ -163,6 +163,15 @@ static int dsi_parse_gpio(struct platform_device *pdev,
 			pr_err("%s:%d, Disp_te gpio not specified\n",
 							__func__, __LINE__);
 	}
+//baoqiang add to open te pin
+	ctrl_pdata->disp_te_gpio = of_get_named_gpio(np,
+						"qcom,platform-te-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->disp_te_gpio))
+			pr_err("%s:%d, Disp_te gpio not specified\n",
+							__func__, __LINE__);
+	printk("----legen---%s----\n",__func__);
+
+//baoqiang end
 
 	ctrl_pdata->rst_gpio = of_get_named_gpio(np,
 					"qcom,platform-reset-gpio", 0);

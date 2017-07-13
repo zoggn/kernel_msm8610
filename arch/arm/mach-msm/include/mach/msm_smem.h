@@ -40,17 +40,6 @@ enum {
 
 #define SMEM_NUM_SMD_STREAM_CHANNELS        64
 
-/**
- * OVERFLOW_ADD_UNSIGNED() - check for unsigned overflow
- *
- * @type: type to check for overflow
- * @a: left value to use
- * @b: right value to use
- * @returns: true if a + b will result in overflow; false otherwise
- */
-#define OVERFLOW_ADD_UNSIGNED(type, a, b) \
-	(((type)~0 - (a)) < (b) ? true : false)
-
 enum {
 	/* fixed items */
 	SMEM_PROC_COMM = 0,
@@ -101,6 +90,12 @@ enum {
 	SMEM_BATT_INFO,
 	SMEM_APPS_BOOT_MODE,
 	SMEM_VERSION_FIRST,
+	//add by zcl for board id
+	SMEM_VERSION_BOARD_ID=111,
+	//end add by zcl for board id
+	//add by shicuiping for power on voltage
+	SMEM_VERSION_POWERON_VOLTAGE=112,
+	//end add by shicuiping for power on voltage
 	SMEM_VERSION_SMD = SMEM_VERSION_FIRST,
 	SMEM_VERSION_LAST = SMEM_VERSION_FIRST + 24,
 	SMEM_OSS_RRCASN1_BUF1,

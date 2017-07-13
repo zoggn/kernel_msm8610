@@ -11,7 +11,7 @@
  */
 
 /dts-v1/;
-
+/include/ "msm8610-v2.dtsi"
 /include/ "msm8610.dtsi"
 
 / {
